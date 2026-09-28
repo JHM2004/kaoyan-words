@@ -299,9 +299,8 @@ public class MainActivity extends Activity {
                 wrongSet.remove(order.get(ptr));
                 saveWrong();
             }
-            handler.postDelayed(new Runnable() {
-                @Override public void run() { advance(); }
-            }, 600);
+            // 答对后立即跳到下一题
+            advance();
         } else {
             clicked.setTextColor(Color.WHITE);
             bg(clicked, C_RED, 14);
