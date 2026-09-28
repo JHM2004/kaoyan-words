@@ -1,0 +1,10 @@
+# 构建产物
+build/
+.gradle/
+**/.gradle/
+app/build/
+local.properties
+.kotlin/
+captures/
+.idea/
+*.iml
