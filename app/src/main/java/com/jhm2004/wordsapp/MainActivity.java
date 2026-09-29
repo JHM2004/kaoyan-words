@@ -86,12 +86,7 @@ public class MainActivity extends Activity {
         loadWrongFromPrefs();
         loadWords();
         buildShell();
-        if (loadSession()) {
-            buildQuizBox();
-            showQuiz();
-        } else {
-            showHome();
-        }
+        showHome();
     }
 
     // ---------- 构建静态外壳 ----------
@@ -147,11 +142,6 @@ public class MainActivity extends Activity {
         box.addView(title);
         box.addView(sub);
 
-        if (hasSession()) {
-            box.addView(homeBtn(sessionLabel(), new Runnable() {
-                @Override public void run() { resumeSession(); }
-            }));
-        }
         box.addView(homeBtn("顺序刷题", new Runnable() { @Override public void run() { startMode(MODE_SEQ); } }));
         box.addView(homeBtn("随机刷题", new Runnable() { @Override public void run() { startMode(MODE_RANDOM); } }));
         box.addView(homeBtn("错题本（" + wrongSet.size() + " 个）", new Runnable() {
@@ -183,6 +173,12 @@ public class MainActivity extends Activity {
 
     // ---------- 开始模式 ----------
     private void startMode(int m) {
+        // 该模式有未完成的进度则直接恢复，否则开启新的一轮
+        if (loadSession(m)) {
+            buildQuizBox();
+            showQuiz();
+            return;
+        }
         mode = m;
         correctCount = 0;
         wrongCount = 0;
@@ -340,7 +336,7 @@ public class MainActivity extends Activity {
 
     // ---------- 结果页 ----------
     private void showSummary() {
-        clearSession();
+        clearSession(mode);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(26), dp(70), dp(26), dp(30));
@@ -441,7 +437,11 @@ public class MainActivity extends Activity {
         prefs.edit().putStringSet(KEY_WRONG, set).apply();
     }
 
-    // ---------- 刷题进度持久化 ----------
+    // ---------- 刷题进度持久化（按模式分别存储） ----------
+    private static String sessionKey(int m) {
+        return KEY_SESSION + "." + m;
+    }
+
     private void saveSession() {
         try {
             JSONObject o = new JSONObject();
@@ -453,16 +453,16 @@ public class MainActivity extends Activity {
             JSONArray arr = new JSONArray();
             for (int i : order) arr.put(i);
             o.put("order", arr);
-            prefs.edit().putString(KEY_SESSION, o.toString()).apply();
+            prefs.edit().putString(sessionKey(mode), o.toString()).apply();
         } catch (Exception ignore) {}
     }
 
-    private boolean loadSession() {
-        String s = prefs.getString(KEY_SESSION, null);
+    private boolean loadSession(int m) {
+        String s = prefs.getString(sessionKey(m), null);
         if (s == null) return false;
         try {
             JSONObject o = new JSONObject(s);
-            mode = o.getInt("mode");
+            mode = m;
             ptr = o.getInt("ptr");
             quizTotal = o.getInt("total");
             correctCount = o.getInt("ok");
@@ -470,34 +470,15 @@ public class MainActivity extends Activity {
             JSONArray arr = o.getJSONArray("order");
             order = new ArrayList<>();
             for (int i = 0; i < arr.length(); i++) order.add(arr.getInt(i));
+            if (order.isEmpty() || ptr >= quizTotal) { clearSession(m); return false; }
             return true;
         } catch (Exception e) {
-            clearSession();
+            clearSession(m);
             return false;
         }
     }
 
-    private void clearSession() {
-        prefs.edit().remove(KEY_SESSION).apply();
-    }
-
-    private boolean hasSession() {
-        return prefs.getString(KEY_SESSION, null) != null;
-    }
-
-    private String sessionLabel() {
-        try {
-            JSONObject o = new JSONObject(prefs.getString(KEY_SESSION, "{}"));
-            return "继续上次刷题（第 " + (o.getInt("ptr") + 1) + " / " + o.getInt("total") + " 题）";
-        } catch (Exception e) {
-            return "继续上次刷题";
-        }
-    }
-
-    private void resumeSession() {
-        if (loadSession()) {
-            buildQuizBox();
-            showQuiz();
-        }
+    private void clearSession(int m) {
+        prefs.edit().remove(sessionKey(m)).apply();
     }
 }
