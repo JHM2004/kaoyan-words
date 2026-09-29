@@ -43,6 +43,7 @@ public class MainActivity extends Activity {
 
     private static final String PREFS = "wordquiz";
     private static final String KEY_WRONG = "wrong_set";
+    private static final String KEY_SESSION = "session";
 
     private static final int MODE_SEQ = 0;
     private static final int MODE_RANDOM = 1;
@@ -85,7 +86,12 @@ public class MainActivity extends Activity {
         loadWrongFromPrefs();
         loadWords();
         buildShell();
-        showHome();
+        if (loadSession()) {
+            buildQuizBox();
+            showQuiz();
+        } else {
+            showHome();
+        }
     }
 
     // ---------- 构建静态外壳 ----------
@@ -99,7 +105,7 @@ public class MainActivity extends Activity {
 
         final Button back = btn("返回首页", 13, C_SUB, mCard(12, 0xFFEBE7DE));
         back.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showHome(); }
+            @Override public void onClick(View v) { clearSession(); showHome(); }
         });
 
         LinearLayout header = new LinearLayout(this);
@@ -188,6 +194,7 @@ public class MainActivity extends Activity {
         buildQuizBox();
         quizTotal = order.size();
         ptr = 0;
+        saveSession();
         showQuiz();
     }
 
@@ -314,6 +321,7 @@ public class MainActivity extends Activity {
                 wrongSet.add(order.get(ptr));
                 saveWrong();
             }
+            saveSession();
             nextBtn.setVisibility(View.VISIBLE);
         }
     }
@@ -321,11 +329,13 @@ public class MainActivity extends Activity {
     private void advance() {
         ptr++;
         if (ptr >= quizTotal) { showSummary(); return; }
+        saveSession();
         showQuiz();
     }
 
     // ---------- 结果页 ----------
     private void showSummary() {
+        clearSession();
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(26), dp(70), dp(26), dp(30));
@@ -424,5 +434,45 @@ public class MainActivity extends Activity {
         HashSet<String> set = new HashSet<>();
         for (int i : wrongSet) set.add(String.valueOf(i));
         prefs.edit().putStringSet(KEY_WRONG, set).apply();
+    }
+
+    // ---------- 刷题进度持久化 ----------
+    private void saveSession() {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("mode", mode);
+            o.put("ptr", ptr);
+            o.put("total", quizTotal);
+            o.put("ok", correctCount);
+            o.put("no", wrongCount);
+            JSONArray arr = new JSONArray();
+            for (int i : order) arr.put(i);
+            o.put("order", arr);
+            prefs.edit().putString(KEY_SESSION, o.toString()).apply();
+        } catch (Exception ignore) {}
+    }
+
+    private boolean loadSession() {
+        String s = prefs.getString(KEY_SESSION, null);
+        if (s == null) return false;
+        try {
+            JSONObject o = new JSONObject(s);
+            mode = o.getInt("mode");
+            ptr = o.getInt("ptr");
+            quizTotal = o.getInt("total");
+            correctCount = o.getInt("ok");
+            wrongCount = o.getInt("no");
+            JSONArray arr = o.getJSONArray("order");
+            order = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) order.add(arr.getInt(i));
+            return true;
+        } catch (Exception e) {
+            clearSession();
+            return false;
+        }
+    }
+
+    private void clearSession() {
+        prefs.edit().remove(KEY_SESSION).apply();
     }
 }
