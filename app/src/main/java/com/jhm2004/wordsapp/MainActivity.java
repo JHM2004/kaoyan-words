@@ -22,6 +22,7 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.Switch;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -50,6 +51,8 @@ public class MainActivity extends Activity {
 
     private static final String PREFS = "wordquiz";
     private static final String KEY_WRONG = "wrong_set";
+    private static final String KEY_FAV = "fav_set";
+    private static final String KEY_SETTING_RMC = "rm_correct";
     private static final String KEY_SESSION = "session";
 
     private static final int MODE_SEQ = 0;
@@ -64,6 +67,8 @@ public class MainActivity extends Activity {
     private final List<Word> words = new ArrayList<>();
     private final Map<String, Integer> wordIndex = new HashMap<>();
     private final Set<String> wrongSet = new HashSet<>();
+    private final Set<String> favSet = new HashSet<>();
+    private boolean rmAfterCorrect;
     private final Handler handler = new Handler();
     private SharedPreferences prefs;
 
@@ -86,6 +91,7 @@ public class MainActivity extends Activity {
     private TextView wordView;
     private LinearLayout optionsBox;
     private Button nextBtn;
+    private Button favBtn;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -93,6 +99,8 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         loadWords();
         loadWrongFromPrefs();
+        loadFavFromPrefs();
+        loadSettings();
         buildShell();
         showHome();
     }
@@ -161,6 +169,12 @@ public class MainActivity extends Activity {
         box.addView(homeBtn("错题记录（" + wrongSet.size() + " 个）", new Runnable() {
             @Override public void run() { showWrongList(); }
         }));
+        box.addView(homeBtn("收藏夹（" + favSet.size() + " 个）", new Runnable() {
+            @Override public void run() { showFavList(); }
+        }));
+        box.addView(homeBtn("设置", new Runnable() {
+            @Override public void run() { showSettings(); }
+        }));
 
         fill(box);
     }
@@ -179,7 +193,27 @@ public class MainActivity extends Activity {
 
     // ---------- 开始模式 ----------
     private void startMode(int m) {
-        // 该模式有未完成的进度则直接恢复，否则开启新的一轮
+        if (m == MODE_WRONG) {
+            // 错题重刷：始终按当前错题重建，实时反映最新错题数
+            mode = m;
+            correctCount = 0;
+            wrongCount = 0;
+            List<Integer> list = new ArrayList<>();
+            for (String w : wrongSet) {
+                Integer idx = wordIndex.get(w);
+                if (idx != null) list.add(idx);
+            }
+            Collections.shuffle(list);
+            order = list;
+            if (order.isEmpty()) { toast("没有可刷的单词"); showHome(); return; }
+            buildQuizBox();
+            quizTotal = order.size();
+            ptr = 0;
+            saveSession();
+            showQuiz();
+            return;
+        }
+        // 顺序/随机：该模式有未完成的进度则恢复，否则开启新的一轮
         if (loadSession(m)) {
             buildQuizBox();
             showQuiz();
@@ -188,19 +222,9 @@ public class MainActivity extends Activity {
         mode = m;
         correctCount = 0;
         wrongCount = 0;
-        if (m == MODE_WRONG) {
-            List<Integer> list = new ArrayList<>();
-            for (String w : wrongSet) {
-                Integer idx = wordIndex.get(w);
-                if (idx != null) list.add(idx);
-            }
-            Collections.shuffle(list);
-            order = list;
-        } else {
-            order = new ArrayList<>();
-            for (int i = 0; i < words.size(); i++) order.add(i);
-            if (m == MODE_RANDOM) Collections.shuffle(order);
-        }
+        order = new ArrayList<>();
+        for (int i = 0; i < words.size(); i++) order.add(i);
+        if (m == MODE_RANDOM) Collections.shuffle(order);
         if (order.isEmpty()) { toast("没有可刷的单词"); showHome(); return; }
         buildQuizBox();
         quizTotal = order.size();
@@ -238,6 +262,18 @@ public class MainActivity extends Activity {
         wordView.setGravity(Gravity.CENTER);
         box.addView(wordView, new LinearLayout.LayoutParams(-1, dp(78)));
 
+        // 收藏按钮
+        favBtn = new Button(this);
+        favBtn.setTextSize(16);
+        favBtn.setAllCaps(false);
+        LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(-1, dp(40));
+        flp.setMargins(dp(60), 0, dp(60), dp(6));
+        favBtn.setLayoutParams(flp);
+        favBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { toggleFav(); }
+        });
+        box.addView(favBtn);
+
         // 选项
         optionsBox = new LinearLayout(this);
         optionsBox.setOrientation(LinearLayout.VERTICAL);
@@ -268,6 +304,7 @@ public class MainActivity extends Activity {
         progressBar.setProgress(ptr);
         statsView.setText("正确 " + correctCount + "   错误 " + wrongCount);
         wordView.setText(wd.w);
+        refreshFavBtn();
 
         // 打乱选项
         List<String> opts = new ArrayList<>();
@@ -312,8 +349,8 @@ public class MainActivity extends Activity {
             bg(clicked, C_GREEN, 14);
             correctCount++;
             statsView.setText("正确 " + correctCount + "   错误 " + wrongCount);
-            // 错题本中答对，移出错词集
-            if (mode == MODE_WRONG) {
+            // 错题重刷中答对：按全局设置决定是否从错题中移除
+            if (mode == MODE_WRONG && rmAfterCorrect) {
                 wrongSet.remove(words.get(order.get(ptr)).w);
                 saveWrong();
             }
@@ -573,6 +610,202 @@ public class MainActivity extends Activity {
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    // ---------- 收藏功能 ----------
+    private void loadFavFromPrefs() {
+        favSet.clear();
+        try {
+            for (String s : prefs.getStringSet(KEY_FAV, new HashSet<String>())) {
+                if (wordIndex.containsKey(s)) favSet.add(s);
+            }
+        } catch (Exception ignore) {}
+    }
+
+    private void saveFav() {
+        HashSet<String> set = new HashSet<>();
+        for (String w : favSet) set.add(w);
+        prefs.edit().putStringSet(KEY_FAV, set).apply();
+    }
+
+    private void refreshFavBtn() {
+        String w = words.get(order.get(ptr)).w;
+        boolean f = favSet.contains(w);
+        if (favBtn == null) return;
+        favBtn.setText(f ? "已收藏 ★" : "收藏 ☆");
+        favBtn.setTextColor(f ? C_BLUE : C_SUB);
+        favBtn.setBackground(f ? mCard(10, 0xFFFEF3C7) : bgFlat(0xFFEBE7DE, 10));
+    }
+
+    private void toggleFav() {
+        String w = words.get(order.get(ptr)).w;
+        if (favSet.contains(w)) {
+            favSet.remove(w);
+            toast("已取消收藏：" + w);
+        } else {
+            favSet.add(w);
+            toast("已收藏：" + w);
+        }
+        saveFav();
+        refreshFavBtn();
+    }
+
+    private GradientDrawable bgFlat(int color, int r) {
+        return mCard(r, color);
+    }
+
+    private void showFavList() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(16), dp(20), dp(20));
+
+        if (favSet.isEmpty()) {
+            TextView t = tv("收藏夹是空的～\n刷题时点击单词下方的“收藏”即可加入", 15, C_SUB, false);
+            t.setGravity(Gravity.CENTER);
+            t.setPadding(0, dp(70), 0, 0);
+            box.addView(t);
+            fill(box);
+            return;
+        }
+
+        box.addView(tv("收藏夹（" + favSet.size() + " 个）", 18, C_TEXT, true));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setPadding(0, dp(10), 0, dp(14));
+        actions.addView(actionBtn("一键复制", new Runnable() { @Override public void run() { copyFav(); } }));
+        actions.addView(actionBtn("分享导出", new Runnable() { @Override public void run() { shareFav(); } }));
+        actions.addView(actionBtn("清空收藏", new Runnable() { @Override public void run() { confirmClearFav(); } }));
+        box.addView(actions);
+
+        List<String> sorted = new ArrayList<>(favSet);
+        Collections.sort(sorted);
+        for (String w : sorted) box.addView(favRow(w));
+
+        fill(box);
+    }
+
+    private View favRow(final String w) {
+        Integer idx = wordIndex.get(w);
+        String meaning = (idx != null) ? words.get(idx).c : "";
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable g = mCard(10, C_CARD);
+        g.setStroke(dp(1), C_LINE);
+        row.setBackground(g);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+        rlp.setMargins(0, 0, 0, dp(8));
+        row.setLayoutParams(rlp);
+
+        LinearLayout top = new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(dp(12), dp(6), dp(8), 0);
+        top.addView(tv(w, 16, C_TEXT, true), new LinearLayout.LayoutParams(0, -2, 1f));
+        Button del = btn("✕", 15, C_RED, mCard(8, 0xFFFEE2E2));
+        del.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { favSet.remove(w); saveFav(); showFavList(); }
+        });
+        top.addView(del, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        row.addView(top);
+
+        TextView tm = tv(meaning, 15, C_SUB, false);
+        tm.setPadding(dp(12), 0, dp(12), dp(10));
+        row.addView(tm);
+        return row;
+    }
+
+    private String buildFavText() {
+        List<String> sorted = new ArrayList<>(favSet);
+        Collections.sort(sorted);
+        StringBuilder sb = new StringBuilder();
+        for (String w : sorted) {
+            Integer idx = wordIndex.get(w);
+            if (idx != null) sb.append(w).append(' ').append(words.get(idx).c).append('\n');
+        }
+        return sb.toString().trim();
+    }
+
+    private void copyFav() {
+        String text = buildFavText();
+        if (text.isEmpty()) { toast("收藏夹为空"); return; }
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(ClipData.newPlainText("收藏", text));
+        toast("已复制 " + favSet.size() + " 个收藏单词（含意思）");
+    }
+
+    private void shareFav() {
+        String text = buildFavText();
+        if (text.isEmpty()) { toast("收藏夹为空"); return; }
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_TEXT, text);
+        try {
+            startActivity(Intent.createChooser(send, "导出收藏"));
+        } catch (Exception e) {
+            toast("没有可用的分享应用");
+        }
+    }
+
+    private void confirmClearFav() {
+        new AlertDialog.Builder(this)
+                .setTitle("清空收藏夹")
+                .setMessage("确定要清空全部 " + favSet.size() + " 个收藏吗？此操作不可恢复。")
+                .setPositiveButton("清空", new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int w) {
+                        favSet.clear();
+                        saveFav();
+                        showFavList();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ---------- 设置 ----------
+    private void loadSettings() {
+        rmAfterCorrect = prefs.getBoolean(KEY_SETTING_RMC, false);
+    }
+
+    private void saveSettings() {
+        prefs.edit().putBoolean(KEY_SETTING_RMC, rmAfterCorrect).apply();
+    }
+
+    private void showSettings() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(16), dp(20), dp(20));
+
+        box.addView(tv("设置", 18, C_TEXT, true));
+
+        // 错题重刷：答对后是否移除
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(8), dp(10));
+        row.setBackground(mCard(12, C_CARD));
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, -2);
+        rp.setMargins(0, dp(12), 0, 0);
+        row.setLayoutParams(rp);
+
+        LinearLayout textCol = new LinearLayout(this);
+        textCol.setOrientation(LinearLayout.VERTICAL);
+        row.addView(textCol, new LinearLayout.LayoutParams(0, -2, 1f));
+        textCol.addView(tv("错题重刷答对后移除", 16, C_TEXT, true));
+        TextView hint = tv("开启后，错题重刷中答对的单词会从错题中移除；关闭则错题记录保留所有错题。", 13, C_SUB, false);
+        hint.setPadding(0, dp(4), 0, 0);
+        textCol.addView(hint);
+
+        Switch sw = new Switch(this);
+        sw.setChecked(rmAfterCorrect);
+        row.addView(sw, new LinearLayout.LayoutParams(-2, -2));
+        sw.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(android.widget.CompoundButton b, boolean checked) {
+                rmAfterCorrect = checked;
+                saveSettings();
+            }
+        });
+
+        box.addView(row);
+        fill(box);
     }
 
     // ---------- 刷题进度持久化（按模式分别存储） ----------
