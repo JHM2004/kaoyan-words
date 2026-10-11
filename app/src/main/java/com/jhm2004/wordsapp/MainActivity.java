@@ -1,7 +1,12 @@
 package com.jhm2004.wordsapp;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -25,8 +30,10 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class MainActivity extends Activity {
@@ -55,7 +62,8 @@ public class MainActivity extends Activity {
     }
 
     private final List<Word> words = new ArrayList<>();
-    private final Set<Integer> wrongSet = new HashSet<>();
+    private final Map<String, Integer> wordIndex = new HashMap<>();
+    private final Set<String> wrongSet = new HashSet<>();
     private final Handler handler = new Handler();
     private SharedPreferences prefs;
 
@@ -83,8 +91,8 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        loadWrongFromPrefs();
         loadWords();
+        loadWrongFromPrefs();
         buildShell();
         showHome();
     }
@@ -144,17 +152,15 @@ public class MainActivity extends Activity {
 
         box.addView(homeBtn("顺序刷题", new Runnable() { @Override public void run() { startMode(MODE_SEQ); } }));
         box.addView(homeBtn("随机刷题", new Runnable() { @Override public void run() { startMode(MODE_RANDOM); } }));
-        box.addView(homeBtn("错题本（" + wrongSet.size() + " 个）", new Runnable() {
+        box.addView(homeBtn("错题重刷（" + wrongSet.size() + " 个）", new Runnable() {
             @Override public void run() {
                 if (wrongSet.isEmpty()) { toast("错题本为空，先去刷题吧"); return; }
                 startMode(MODE_WRONG);
             }
         }));
-        if (!wrongSet.isEmpty()) {
-            box.addView(homeBtn("清空错题本", new Runnable() {
-                @Override public void run() { wrongSet.clear(); saveWrong(); showHome(); }
-            }));
-        }
+        box.addView(homeBtn("错题记录（" + wrongSet.size() + " 个）", new Runnable() {
+            @Override public void run() { showWrongList(); }
+        }));
 
         fill(box);
     }
@@ -183,7 +189,11 @@ public class MainActivity extends Activity {
         correctCount = 0;
         wrongCount = 0;
         if (m == MODE_WRONG) {
-            List<Integer> list = new ArrayList<>(wrongSet);
+            List<Integer> list = new ArrayList<>();
+            for (String w : wrongSet) {
+                Integer idx = wordIndex.get(w);
+                if (idx != null) list.add(idx);
+            }
             Collections.shuffle(list);
             order = list;
         } else {
@@ -304,7 +314,7 @@ public class MainActivity extends Activity {
             statsView.setText("正确 " + correctCount + "   错误 " + wrongCount);
             // 错题本中答对，移出错词集
             if (mode == MODE_WRONG) {
-                wrongSet.remove(order.get(ptr));
+                wrongSet.remove(words.get(order.get(ptr)).w);
                 saveWrong();
             }
             // 答对后立即跳到下一题
@@ -319,7 +329,7 @@ public class MainActivity extends Activity {
             statsView.setText("正确 " + correctCount + "   错误 " + wrongCount);
             // 记入错题本
             if (mode != MODE_WRONG) {
-                wrongSet.add(order.get(ptr));
+                wrongSet.add(words.get(order.get(ptr)).w);
                 saveWrong();
             }
             saveSession();
@@ -417,6 +427,7 @@ public class MainActivity extends Activity {
                 JSONArray dd = o.getJSONArray("d");
                 words.add(new Word(o.getString("w"), o.getString("c"),
                         new String[]{dd.getString(0), dd.getString(1), dd.getString(2)}));
+                wordIndex.put(o.getString("w"), i);
             }
         } catch (Exception e) {
             words.clear();
@@ -426,15 +437,142 @@ public class MainActivity extends Activity {
     private void loadWrongFromPrefs() {
         wrongSet.clear();
         try {
-            for (String s : prefs.getStringSet(KEY_WRONG, new HashSet<String>()))
-                wrongSet.add(Integer.parseInt(s));
+            for (String s : prefs.getStringSet(KEY_WRONG, new HashSet<String>())) {
+                // 兼容旧版本：数字索引 -> 转为单词
+                Integer idx = null;
+                try { idx = Integer.parseInt(s); } catch (NumberFormatException ignore) {}
+                if (idx != null) {
+                    if (idx >= 0 && idx < words.size()) s = words.get(idx).w; else continue;
+                }
+                if (wordIndex.containsKey(s)) wrongSet.add(s);
+            }
         } catch (Exception ignore) {}
     }
 
     private void saveWrong() {
         HashSet<String> set = new HashSet<>();
-        for (int i : wrongSet) set.add(String.valueOf(i));
+        for (String w : wrongSet) set.add(w);
         prefs.edit().putStringSet(KEY_WRONG, set).apply();
+    }
+
+    // ---------- 错题记录页 ----------
+    private void showWrongList() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(16), dp(20), dp(20));
+
+        if (wrongSet.isEmpty()) {
+            TextView t = tv("还没有错题～\n去刷题，答错的单词会自动记录在这里", 15, C_SUB, false);
+            t.setGravity(Gravity.CENTER);
+            t.setPadding(0, dp(70), 0, 0);
+            box.addView(t);
+            fill(box);
+            return;
+        }
+
+        box.addView(tv("错题记录（" + wrongSet.size() + " 个）", 18, C_TEXT, true));
+
+        // 操作按钮行
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setPadding(0, dp(10), 0, dp(14));
+        actions.addView(actionBtn("一键复制", new Runnable() { @Override public void run() { copyWrong(); } }));
+        actions.addView(actionBtn("分享导出", new Runnable() { @Override public void run() { shareWrong(); } }));
+        actions.addView(actionBtn("清空错题", new Runnable() { @Override public void run() { confirmClearWrong(); } }));
+        box.addView(actions);
+
+        List<String> sorted = new ArrayList<>(wrongSet);
+        Collections.sort(sorted);
+        for (String w : sorted) box.addView(wrongRow(w));
+
+        fill(box);
+    }
+
+    private Button actionBtn(String label, final Runnable action) {
+        Button b = btn(label, 13, Color.WHITE, mCard(10, C_BLUE));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        lp.setMargins(dp(3), 0, dp(3), 0);
+        b.setLayoutParams(lp);
+        b.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { action.run(); }
+        });
+        return b;
+    }
+
+    private View wrongRow(final String w) {
+        Integer idx = wordIndex.get(w);
+        String meaning = (idx != null) ? words.get(idx).c : "";
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable g = mCard(10, C_CARD);
+        g.setStroke(dp(1), C_LINE);
+        row.setBackground(g);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, -2);
+        rlp.setMargins(0, 0, 0, dp(8));
+        row.setLayoutParams(rlp);
+
+        LinearLayout top = new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(dp(12), dp(6), dp(8), 0);
+        top.addView(tv(w, 16, C_TEXT, true), new LinearLayout.LayoutParams(0, -2, 1f));
+        Button del = btn("✕", 15, C_RED, mCard(8, 0xFFFEE2E2));
+        del.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { wrongSet.remove(w); saveWrong(); showWrongList(); }
+        });
+        top.addView(del, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        row.addView(top);
+
+        TextView tm = tv(meaning, 15, C_SUB, false);
+        tm.setPadding(dp(12), 0, dp(12), dp(10));
+        row.addView(tm);
+        return row;
+    }
+
+    private String buildWrongText() {
+        List<String> sorted = new ArrayList<>(wrongSet);
+        Collections.sort(sorted);
+        StringBuilder sb = new StringBuilder();
+        for (String w : sorted) {
+            Integer idx = wordIndex.get(w);
+            if (idx != null) sb.append(w).append(' ').append(words.get(idx).c).append('\n');
+        }
+        return sb.toString().trim();
+    }
+
+    private void copyWrong() {
+        String text = buildWrongText();
+        if (text.isEmpty()) { toast("错题本为空"); return; }
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(ClipData.newPlainText("错题", text));
+        toast("已复制 " + wrongSet.size() + " 个错题（含正确意思）");
+    }
+
+    private void shareWrong() {
+        String text = buildWrongText();
+        if (text.isEmpty()) { toast("错题本为空"); return; }
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_TEXT, text);
+        try {
+            startActivity(Intent.createChooser(send, "导出错题"));
+        } catch (Exception e) {
+            toast("没有可用的分享应用");
+        }
+    }
+
+    private void confirmClearWrong() {
+        new AlertDialog.Builder(this)
+                .setTitle("清空错题本")
+                .setMessage("确定要清空全部 " + wrongSet.size() + " 个错题吗？此操作不可恢复。")
+                .setPositiveButton("清空", new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface d, int w) {
+                        wrongSet.clear();
+                        saveWrong();
+                        showWrongList();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     // ---------- 刷题进度持久化（按模式分别存储） ----------
