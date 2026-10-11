@@ -262,22 +262,22 @@ public class MainActivity extends Activity {
         wordView.setGravity(Gravity.CENTER);
         box.addView(wordView, new LinearLayout.LayoutParams(-1, dp(78)));
 
-        // 收藏按钮
+        // 选项
+        optionsBox = new LinearLayout(this);
+        optionsBox.setOrientation(LinearLayout.VERTICAL);
+        box.addView(optionsBox);
+
+        // 收藏按钮（在所有选项下面）
         favBtn = new Button(this);
         favBtn.setTextSize(16);
         favBtn.setAllCaps(false);
         LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(-1, dp(40));
-        flp.setMargins(dp(60), 0, dp(60), dp(6));
+        flp.setMargins(dp(60), dp(10), dp(60), dp(6));
         favBtn.setLayoutParams(flp);
         favBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { toggleFav(); }
         });
         box.addView(favBtn);
-
-        // 选项
-        optionsBox = new LinearLayout(this);
-        optionsBox.setOrientation(LinearLayout.VERTICAL);
-        box.addView(optionsBox);
 
         // 下一题（选错后出现）
         nextBtn = btn("下一题 ▶", 17, -1, mCard(14, C_BLUE));
