@@ -30,11 +30,13 @@ import org.json.JSONObject;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 
 public class MainActivity extends Activity {
@@ -92,6 +94,9 @@ public class MainActivity extends Activity {
     private LinearLayout optionsBox;
     private Button nextBtn;
     private Button favBtn;
+    private Button prevBtn;
+    private int[] selIdx;
+    private boolean[] selOk;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -206,9 +211,10 @@ public class MainActivity extends Activity {
             Collections.shuffle(list);
             order = list;
             if (order.isEmpty()) { toast("没有可刷的单词"); showHome(); return; }
-            buildQuizBox();
             quizTotal = order.size();
+            initSel(quizTotal);
             ptr = 0;
+            buildQuizBox();
             saveSession();
             showQuiz();
             return;
@@ -226,9 +232,10 @@ public class MainActivity extends Activity {
         for (int i = 0; i < words.size(); i++) order.add(i);
         if (m == MODE_RANDOM) Collections.shuffle(order);
         if (order.isEmpty()) { toast("没有可刷的单词"); showHome(); return; }
-        buildQuizBox();
         quizTotal = order.size();
+        initSel(quizTotal);
         ptr = 0;
+        buildQuizBox();
         saveSession();
         showQuiz();
     }
@@ -279,22 +286,39 @@ public class MainActivity extends Activity {
         });
         box.addView(favBtn);
 
-        // 下一题（选错后出现）
-        nextBtn = btn("下一题 ▶", 17, -1, mCard(14, C_BLUE));
+        // 导航行：上一题 / 下一题
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.HORIZONTAL);
+        nav.setPadding(0, dp(4), 0, 0);
+        LinearLayout.LayoutParams nlp = new LinearLayout.LayoutParams(-1, -2);
+        nav.setLayoutParams(nlp);
+
+        prevBtn = btn("← 上一题", 16, -1, mCard(12, 0xFFEFF1F5));
+        prevBtn.setTextColor(C_TEXT);
+        prevBtn.setLayoutParams(new LinearLayout.LayoutParams(0, dp(54), 1f));
+        prevBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { prev(); }
+        });
+        nav.addView(prevBtn);
+
+        nextBtn = btn("下一题 ▶", 16, -1, mCard(12, C_BLUE));
         nextBtn.setTextColor(Color.WHITE);
+        nextBtn.setLayoutParams(new LinearLayout.LayoutParams(0, dp(54), 1f));
         nextBtn.setVisibility(View.GONE);
-        box.addView(nextBtn, new LinearLayout.LayoutParams(-1, dp(56)));
         nextBtn.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { if (answered) advance(); }
         });
+        nav.addView(nextBtn);
+        box.addView(nav);
 
         fill(box);
     }
 
     // ---------- 显示一题 ----------
     private void showQuiz() {
-        answered = false;
+        answered = (selIdx != null && selIdx[ptr] != -1);
         nextBtn.setVisibility(View.GONE);
+        prevBtn.setVisibility(ptr > 0 ? View.VISIBLE : View.GONE);
 
         int idx = order.get(ptr);
         Word wd = words.get(idx);
@@ -306,23 +330,41 @@ public class MainActivity extends Activity {
         wordView.setText(wd.w);
         refreshFavBtn();
 
-        // 打乱选项
-        List<String> opts = new ArrayList<>();
-        opts.add(wd.c);
-        opts.add(wd.d[0]); opts.add(wd.d[1]); opts.add(wd.d[2]);
-        Collections.shuffle(opts);
-        shown = opts.toArray(new String[0]);
-        correctIdx = 0;
-        for (int i = 0; i < shown.length; i++) if (shown[i].equals(wd.c)) correctIdx = i;
+        // 打乱选项（让正确选项均匀分布在各位置，整体更随机）
+        shown = new String[4];
+        int r = new Random().nextInt(4);
+        shown[r] = wd.c;
+        List<String> dist = new ArrayList<>(Arrays.asList(wd.d[0], wd.d[1], wd.d[2]));
+        Collections.shuffle(dist);
+        int k = 0;
+        for (int i = 0; i < 4; i++) if (i != r) shown[i] = dist.get(k++);
+        correctIdx = r;
 
         optionsBox.removeAllViews();
-        for (int i = 0; i < shown.length; i++) {
+        for (int i = 0; i < 4; i++) {
             final int fi = i;
             Button b = optionBtn("ABCD".charAt(fi) + ".  " + shown[i]);
             b.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) { if (!answered) onOptionClick((Button) v, fi); }
             });
             optionsBox.addView(b);
+        }
+        optionsBox.requestLayout();
+
+        // 返回上一题：锁定显示当时的选择结果
+        if (answered) {
+            Button sb = (Button) optionsBox.getChildAt(selIdx[ptr]);
+            if (selOk[ptr]) {
+                sb.setTextColor(Color.WHITE);
+                bg(sb, C_GREEN, 14);
+            } else {
+                sb.setTextColor(Color.WHITE);
+                bg(sb, C_RED, 14);
+                Button cb = (Button) optionsBox.getChildAt(correctIdx);
+                cb.setTextColor(Color.WHITE);
+                bg(cb, C_GREEN, 14);
+            }
+            nextBtn.setVisibility(View.VISIBLE);
         }
     }
 
@@ -344,11 +386,13 @@ public class MainActivity extends Activity {
 
     private void onOptionClick(Button clicked, int i) {
         answered = true;
-        if (i == correctIdx) {
+        selIdx[ptr] = i;
+        selOk[ptr] = (i == correctIdx);
+        recount();
+        statsView.setText("正确 " + correctCount + "   错误 " + wrongCount);
+        if (selOk[ptr]) {
             clicked.setTextColor(Color.WHITE);
             bg(clicked, C_GREEN, 14);
-            correctCount++;
-            statsView.setText("正确 " + correctCount + "   错误 " + wrongCount);
             // 错题重刷中答对：按全局设置决定是否从错题中移除
             if (mode == MODE_WRONG && rmAfterCorrect) {
                 wrongSet.remove(words.get(order.get(ptr)).w);
@@ -362,8 +406,6 @@ public class MainActivity extends Activity {
             Button cb = (Button) optionsBox.getChildAt(correctIdx);
             cb.setTextColor(Color.WHITE);
             bg(cb, C_GREEN, 14);
-            wrongCount++;
-            statsView.setText("正确 " + correctCount + "   错误 " + wrongCount);
             // 记入错题本
             if (mode != MODE_WRONG) {
                 wrongSet.add(words.get(order.get(ptr)).w);
@@ -372,6 +414,30 @@ public class MainActivity extends Activity {
             saveSession();
             nextBtn.setVisibility(View.VISIBLE);
         }
+    }
+
+    private void prev() {
+        if (ptr <= 0) return;
+        ptr--;
+        saveSession();
+        showQuiz();
+    }
+
+    // 依据每题的答题记录重算正确/错误数，保证返回上一题后统计仍一致
+    private void recount() {
+        correctCount = 0;
+        int ans = 0;
+        for (int i = 0; i < selIdx.length; i++) {
+            if (selIdx[i] != -1) { ans++; if (selOk[i]) correctCount++; }
+        }
+        wrongCount = ans - correctCount;
+    }
+
+    // 初始化记分矩阵（-1 表示该题尚未作答）
+    private void initSel(int n) {
+        selIdx = new int[n];
+        selOk = new boolean[n];
+        Arrays.fill(selIdx, -1);
     }
 
     private void advance() {
@@ -824,6 +890,12 @@ public class MainActivity extends Activity {
             JSONArray arr = new JSONArray();
             for (int i : order) arr.put(i);
             o.put("order", arr);
+            JSONArray si = new JSONArray();
+            for (int v : selIdx) si.put(v);
+            o.put("sel", si);
+            JSONArray so = new JSONArray();
+            for (boolean b : selOk) so.put(b ? 1 : 0);
+            o.put("selok", so);
             prefs.edit().putString(sessionKey(mode), o.toString()).apply();
         } catch (Exception ignore) {}
     }
@@ -842,6 +914,17 @@ public class MainActivity extends Activity {
             order = new ArrayList<>();
             for (int i = 0; i < arr.length(); i++) order.add(arr.getInt(i));
             if (order.isEmpty() || ptr >= quizTotal) { clearSession(m); return false; }
+            // 恢复记分矩阵（旧版本无则初始化）
+            initSel(quizTotal);
+            JSONArray si = o.optJSONArray("sel");
+            JSONArray so = o.optJSONArray("selok");
+            if (si != null && so != null && si.length() == quizTotal) {
+                for (int i = 0; i < si.length(); i++) {
+                    selIdx[i] = si.getInt(i);
+                    selOk[i] = so.getInt(i) == 1;
+                }
+                recount();
+            }
             return true;
         } catch (Exception e) {
             clearSession(m);
