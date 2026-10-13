@@ -103,6 +103,10 @@ public class MainActivity extends Activity {
     private int[] selIdx;
     private boolean[] selOk;
     private long quizSeed;
+    private int statsMode;
+    private int statsWeekOffset;
+    private int statsMonthOffset;
+    private String statsSel;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -1049,25 +1053,6 @@ public class MainActivity extends Activity {
         return streak;
     }
 
-    private List<DayStat> last7Stats(HashMap<String, int[]> map) {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd (EEE)", Locale.CHINA);
-        Calendar cal = Calendar.getInstance();
-        List<DayStat> list = new ArrayList<>();
-        for (int i = 6; i >= 0; i--) {
-            Calendar c = (Calendar) cal.clone();
-            c.add(Calendar.DAY_OF_YEAR, -i);
-            String ds = sdf.format(c.getTime());
-            int[] v = map.get(new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(c.getTime()));
-            DayStat d = new DayStat();
-            d.date = ds;
-            d.answered = (v == null) ? 0 : v[0];
-            d.correct = (v == null) ? 0 : v[1];
-            list.add(d);
-        }
-        return list;
-    }
-
-    // 首页末尾的统计卡
     private View buildStatsCard() {
         HashMap<String, int[]> map = loadStatsMap();
         int streak = calcStreak(map);
@@ -1132,8 +1117,16 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    // 统计详情页
+    // 统计详情页（含可点击日历：周/月两种视图）
     private void showStats() {
+        statsMode = 0;
+        statsWeekOffset = 0;
+        statsMonthOffset = 0;
+        statsSel = todayStr();
+        renderStatsPage();
+    }
+
+    private void renderStatsPage() {
         HashMap<String, int[]> map = loadStatsMap();
         int streak = calcStreak(map);
         int totA = 0, totC = 0;
@@ -1190,18 +1183,303 @@ public class MainActivity extends Activity {
         grid.addView(bigBlock("累计正确率", totPct, "%", 0xFFF59E0B));
         box.addView(grid);
 
-        TextView trendTitle = tv("近 7 天趋势", 16, C_TEXT, true);
-        trendTitle.setPadding(0, dp(14), 0, dp(6));
-        box.addView(trendTitle);
+        // 周/月切换
+        LinearLayout togg = new LinearLayout(this);
+        togg.setOrientation(LinearLayout.HORIZONTAL);
+        togg.setGravity(Gravity.CENTER);
+        togg.setPadding(0, dp(16), 0, dp(2));
+        togg.addView(toggleBtn("周", statsMode == 0), new LinearLayout.LayoutParams(0, dp(38), 1f));
+        togg.addView(toggleBtn("月", statsMode == 1), new LinearLayout.LayoutParams(0, dp(38), 1f));
+        box.addView(togg);
 
-        for (DayStat d : last7Stats(map)) {
-            box.addView(trendRow(d));
-        }
+        // 导航：◀ 标题 ▶
+        LinearLayout nav = new LinearLayout(this);
+        nav.setGravity(Gravity.CENTER_VERTICAL);
+        nav.setPadding(0, dp(6), 0, dp(6));
+        Button pre = btn("◀", 16, C_TEXT, mCard(10, C_LINE));
+        pre.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (statsMode == 0) statsWeekOffset--;
+                else statsMonthOffset--;
+                renderStatsPage();
+            }
+        });
+        nav.addView(pre, new LinearLayout.LayoutParams(-2, dp(40)));
+        TextView navTitle = tv(statsMode == 0 ? weekTitle() : monthTitle(), 16, C_TEXT, true);
+        navTitle.setGravity(Gravity.CENTER);
+        nav.addView(navTitle, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button nxt = btn("▶", 16, C_TEXT, mCard(10, C_LINE));
+        nxt.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (statsMode == 0) statsWeekOffset++;
+                else statsMonthOffset++;
+                renderStatsPage();
+            }
+        });
+        nav.addView(nxt, new LinearLayout.LayoutParams(-2, dp(40)));
+        box.addView(nav);
+
+        // 日历主体
+        box.addView(statsMode == 0 ? weekCalendar(map) : monthCalendar(map));
+
+        // 选中日期详情
+        box.addView(dayDetail(map));
 
         TextView empty = tv((totA == 0) ? "还没有答题记录，去刷几题吧。" : "", 13, C_SUB, false);
-        if (totA == 0) { empty.setPadding(0, dp(8), 0, 0); box.addView(empty); }
+        if (totA == 0) { empty.setPadding(0, dp(6), 0, 0); box.addView(empty); }
 
         fill(box);
+    }
+
+    private Button toggleBtn(String label, boolean active) {
+        Button b = btn(label, 15, active ? Color.WHITE : C_SUB, mCard(10, active ? C_BLUE : C_LINE));
+        b.setAllCaps(false);
+        if (statsMode == 0 && label.equals("周")) {
+            b.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { /* already */ } });
+        } else if (statsMode == 1 && label.equals("月")) {
+            b.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { /* already */ } });
+        } else {
+            final boolean isMonth = label.equals("月");
+            b.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { statsMode = isMonth ? 1 : 0; renderStatsPage(); }
+            });
+        }
+        return b;
+    }
+
+    private String weekTitle() {
+        Calendar mon = weekMonday();
+        SimpleDateFormat f = new SimpleDateFormat("M月d日", Locale.CHINA);
+        Calendar sun = (Calendar) mon.clone();
+        sun.add(Calendar.DAY_OF_YEAR, 6);
+        return f.format(mon.getTime()) + " - " + f.format(sun.getTime());
+    }
+
+    private Calendar weekMonday() {
+        Calendar mon = Calendar.getInstance();
+        int dow = mon.get(Calendar.DAY_OF_WEEK); // 1=日,2=一
+        int diff = (dow + 5) % 7; // 回退到周一
+        mon.add(Calendar.DAY_OF_YEAR, -diff);
+        mon.add(Calendar.DAY_OF_YEAR, statsWeekOffset * 7);
+        return mon;
+    }
+
+    private String monthTitle() {
+        Calendar mc = Calendar.getInstance();
+        mc.add(Calendar.MONTH, statsMonthOffset);
+        return (mc.get(Calendar.YEAR)) + "年" + (mc.get(Calendar.MONTH) + 1) + "月";
+    }
+
+    private int statsColor(int n) {
+        if (n <= 0) return 0xFFECE8DF;
+        if (n < 5) return 0xFFBFE3D0;
+        if (n < 15) return 0xFF7FC98A;
+        if (n < 30) return 0xFF43B75C;
+        return 0xFF22C55E;
+    }
+
+    // 周视图：周一~周日 7 列
+    private View weekCalendar(HashMap<String, int[]> map) {
+        SimpleDateFormat key = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        SimpleDateFormat label = new SimpleDateFormat("MM-dd", Locale.CHINA);
+        Calendar mon = weekMonday();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackground(mCard(12, C_CARD));
+        box.setPadding(dp(10), dp(10), dp(10), dp(10));
+
+        // 星期表头
+        LinearLayout hdr = new LinearLayout(this);
+        hdr.setOrientation(LinearLayout.HORIZONTAL);
+        String[] wd = {"一", "二", "三", "四", "五", "六", "日"};
+        for (String d : wd) {
+            TextView t = tv(d, 13, C_SUB, false);
+            t.setGravity(Gravity.CENTER);
+            hdr.addView(t, new LinearLayout.LayoutParams(0, dp(26), 1f));
+        }
+        box.addView(hdr);
+
+        // 每天一列
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        for (int i = 0; i < 7; i++) {
+            Calendar d = (Calendar) mon.clone();
+            d.add(Calendar.DAY_OF_YEAR, i);
+            String ds = key.format(d.getTime());
+            int[] v = map.get(ds);
+            int n = (v == null) ? 0 : v[0];
+            boolean today = ds.equals(todayStr());
+            final String fds = ds;
+
+            LinearLayout cell = new LinearLayout(this);
+            cell.setOrientation(LinearLayout.VERTICAL);
+            cell.setGravity(Gravity.CENTER);
+            cell.setPadding(0, dp(6), 0, dp(6));
+            GradientDrawable cg = mCard(8, (n > 0) ? statsColor(n) : C_CARD);
+            if (today) cg.setStroke(dp(1), 0xFFF59E0B);
+            cell.setBackground(cg);
+            cell.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { statsSel = fds; renderStatsPage(); }
+            });
+            LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, dp(66), 1f);
+            clp.setMargins(dp(2), dp(2), dp(2), dp(2));
+            cell.setLayoutParams(clp);
+            cell.addView(tv(label.format(d.getTime()), 12, 0xFF6B7280, false));
+            if (n > 0) {
+                cell.addView(tv(String.valueOf(n), 18, 0xFF206A52, true));
+                cell.addView(tv("题", 9, 0xFF206A52, false));
+            } else {
+                cell.addView(tv("·", 18, 0xFFB7B2A7, true));
+            }
+            row.addView(cell);
+        }
+        box.addView(row);
+        return box;
+    }
+
+    // 月视图：日历网格
+    private View monthCalendar(HashMap<String, int[]> map) {
+        SimpleDateFormat key = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        Calendar mc = Calendar.getInstance();
+        mc.set(Calendar.DAY_OF_MONTH, 1);
+        mc.add(Calendar.MONTH, statsMonthOffset);
+        int firstDow = mc.get(Calendar.DAY_OF_WEEK); // 1=日
+        int daysInMonth = mc.getActualMaximum(Calendar.DAY_OF_MONTH);
+        int year = mc.get(Calendar.YEAR), month = mc.get(Calendar.MONTH);
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackground(mCard(12, C_CARD));
+        box.setPadding(dp(10), dp(10), dp(10), dp(10));
+
+        String[] wt = {"日", "一", "二", "三", "四", "五", "六"};
+        LinearLayout hdr = new LinearLayout(this);
+        hdr.setOrientation(LinearLayout.HORIZONTAL);
+        for (String w : wt) {
+            TextView t = tv(w, 13, C_SUB, false);
+            t.setGravity(Gravity.CENTER);
+            hdr.addView(t, new LinearLayout.LayoutParams(0, dp(26), 1f));
+        }
+        box.addView(hdr);
+
+        int[][] rows = new int[6][7];
+        int day = 1;
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 7; c++) {
+                if (r == 0 && c < firstDow - 1) rows[r][c] = 0;
+                else if (day <= daysInMonth) rows[r][c] = day++;
+                else rows[r][c] = 0;
+            }
+        }
+
+        for (int r = 0; r < 6; r++) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            boolean allEmpty = true;
+            for (int c = 0; c < 7; c++) {
+                if (rows[r][c] != 0) allEmpty = false;
+            }
+            if (allEmpty) continue;
+            for (int c = 0; c < 7; c++) {
+                int dd = rows[r][c];
+                if (dd == 0) {
+                    View blank = new View(this);
+                    row.addView(blank, new LinearLayout.LayoutParams(0, dp(54), 1f));
+                    continue;
+                }
+                Calendar d = Calendar.getInstance();
+                d.set(year, month, dd);
+                String ds = key.format(d.getTime());
+                int[] v = map.get(ds);
+                int n = (v == null) ? 0 : v[0];
+                boolean today = ds.equals(todayStr());
+                final String fds = ds;
+
+                LinearLayout cell = new LinearLayout(this);
+                cell.setOrientation(LinearLayout.VERTICAL);
+                cell.setGravity(Gravity.CENTER);
+                cell.setPadding(0, dp(4), 0, dp(2));
+                GradientDrawable cg = mCard(8, (n > 0) ? statsColor(n) : C_CARD);
+                if (today) cg.setStroke(dp(1), 0xFFF59E0B);
+                cell.setBackground(cg);
+                cell.setClickable(true);
+                cell.setOnClickListener(new View.OnClickListener() {
+                    @Override public void onClick(View v) { statsSel = fds; renderStatsPage(); }
+                });
+                LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, dp(54), 1f);
+                clp.setMargins(dp(2), dp(2), dp(2), dp(2));
+                cell.setLayoutParams(clp);
+                cell.addView(tv(String.valueOf(dd), 13, 0xFF4B5563, false));
+                if (n > 0) {
+                    cell.addView(tv(String.valueOf(n), 15, 0xFF206A52, true));
+                } else {
+                    cell.addView(tv("·", 13, 0xFFC9C3B8, false));
+                }
+                row.addView(cell);
+            }
+            box.addView(row);
+        }
+        return box;
+    }
+
+    // 选中日期的明细
+    private View dayDetail(HashMap<String, int[]> map) {
+        SimpleDateFormat label = new SimpleDateFormat("yyyy年M月d日 EEEE", Locale.CHINA);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        card.setBackground(mCard(12, C_CARD));
+        GradientDrawable dg = mCard(12, C_CARD);
+        dg.setStroke(dp(1), C_LINE);
+        card.setBackground(dg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(12), 0, 0);
+        card.setLayoutParams(lp);
+
+        int[] v = map.get(statsSel);
+        int n = (v == null) ? 0 : v[0];
+        int c = (v == null) ? 0 : v[1];
+        int pct = (n == 0) ? 0 : Math.round(100f * c / n);
+        boolean isToday = statsSel.equals(todayStr());
+
+        TextView head = tv(label.format(dateOf(statsSel)) + (isToday ? "（今天）" : ""), 15, C_TEXT, true);
+        card.addView(head);
+
+        if (n == 0) {
+            TextView t = tv("这一天没有刷题记录，点击日历上方的月份/周可切换其他日期浏览。", 13, C_SUB, false);
+            t.setPadding(0, dp(8), 0, 0);
+            card.addView(t);
+        } else {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, dp(10), 0, 0);
+            row.addView(miniBlock("刷题", n + " 题", 0xFF22C55E));
+            row.addView(miniBlock("答对", c + " 题", C_BLUE));
+            row.addView(miniBlock("正确率", pct + " %", 0xFFF59E0B));
+            card.addView(row);
+        }
+        return card;
+    }
+
+    private View miniBlock(String label, String value, int color) {
+        LinearLayout b = new LinearLayout(this);
+        b.setOrientation(LinearLayout.VERTICAL);
+        b.setGravity(Gravity.CENTER_HORIZONTAL);
+        b.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView val = tv(value, 20, color, true);
+        val.setGravity(Gravity.CENTER_HORIZONTAL);
+        b.addView(val);
+        TextView l = tv(label, 12, C_SUB, false);
+        l.setGravity(Gravity.CENTER_HORIZONTAL);
+        l.setPadding(0, dp(3), 0, 0);
+        b.addView(l);
+        return b;
+    }
+
+    private Date dateOf(String ymd) {
+        try {
+            return new SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(ymd);
+        } catch (Exception e) { return new Date(); }
     }
 
     private View bigBlock(String label, int value, String unit, int color) {
@@ -1217,40 +1495,6 @@ public class MainActivity extends Activity {
         l.setPadding(0, dp(4), 0, 0);
         b.addView(l);
         return b;
-    }
-
-    private View trendRow(DayStat d) {
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(4), dp(6), dp(4), dp(6));
-        TextView dt = tv(d.date, 13, C_TEXT, false);
-        dt.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 0.62f));
-        row.addView(dt);
-
-        // 正确率进度条
-        LinearLayout barOuter = new LinearLayout(this);
-        barOuter.setBackground(mCard(5, 0xFFECE8DF));
-        barOuter.setLayoutParams(new LinearLayout.LayoutParams(0, dp(14), 1f));
-        int pct = (d.answered == 0) ? 0 : Math.round(100f * d.correct / d.answered);
-        if (pct > 0) {
-            View fillv = new View(this);
-            fillv.setBackground(mCard(5, pct >= 60 ? C_GREEN : (pct >= 40 ? 0xFFF59E0B : 0xFFEF4444)));
-            barOuter.addView(fillv, new LinearLayout.LayoutParams(0, -1, pct));
-            View spacer = new View(this);
-            barOuter.addView(spacer, new LinearLayout.LayoutParams(0, -1, Math.max(1, 100 - pct)));
-        }
-        row.addView(barOuter);
-
-        LinearLayout info = new LinearLayout(this);
-        info.setOrientation(LinearLayout.VERTICAL);
-        info.setGravity(Gravity.END);
-        info.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 0.5f));
-        info.addView(tv(d.answered + " 题", 14, C_TEXT, true));
-        TextView l = tv(d.correct + " 对 · " + pct + "%", 12, C_SUB, false);
-        l.setGravity(Gravity.END);
-        info.addView(l);
-        row.addView(info);
-        return row;
     }
 
     // ---------- 刷题进度持久化（按模式分别存储） ----------
