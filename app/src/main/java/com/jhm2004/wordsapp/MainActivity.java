@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
     private static final String KEY_SETTING_RMC = "rm_correct";
     private static final String KEY_STATS = "stats";
     private static final String KEY_SESSION = "session";
+    private static final String KEY_ROUNDS = "complete_rounds";
 
     private static final int MODE_SEQ = 0;
     private static final int MODE_RANDOM = 1;
@@ -105,6 +106,7 @@ public class MainActivity extends Activity {
     private long quizSeed;
     private int statsMonthOffset;
     private String statsSel;
+    private String screen = "home";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -159,6 +161,7 @@ public class MainActivity extends Activity {
 
     // ---------- 首页 ----------
     private void showHome() {
+        screen = "home";
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(26), dp(50), dp(26), dp(30));
@@ -167,9 +170,15 @@ public class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         TextView sub = tv("共 " + words.size() + " 个单词 · 每题四选一", 14, C_SUB, false);
         sub.setGravity(Gravity.CENTER);
-        sub.setPadding(0, dp(6), 0, dp(30));
+        sub.setPadding(0, dp(6), 0, dp(12));
         box.addView(title);
         box.addView(sub);
+
+        int rounds = prefs.getInt(KEY_ROUNDS, 0);
+        TextView round = tv("已完整刷完 " + rounds + " 轮 · 加油！", 14, C_BLUE, true);
+        round.setGravity(Gravity.CENTER);
+        round.setPadding(0, 0, 0, dp(20));
+        box.addView(round);
 
         box.addView(homeBtn("顺序刷题", new Runnable() { @Override public void run() { startMode(MODE_SEQ); } }));
         box.addView(homeBtn("随机刷题", new Runnable() { @Override public void run() { startMode(MODE_RANDOM); } }));
@@ -477,12 +486,14 @@ public class MainActivity extends Activity {
 
     // 重建答题界面（从全览返回或跳到某题时调用）
     private void showQuizScreen() {
+        screen = "quiz";
         buildQuizBox();
         showQuiz();
     }
 
     // ---------- 全览页：滑动词都总览，点题号跳转 ----------
     private void showOverview() {
+        screen = "overview";
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(16), dp(12), dp(16), dp(16));
@@ -565,7 +576,11 @@ public class MainActivity extends Activity {
 
     // ---------- 结果页 ----------
     private void showSummary() {
+        screen = "summary";
         clearSession(mode);
+        // 完整刷完一轮，累计轮数 +1
+        int rounds = prefs.getInt(KEY_ROUNDS, 0) + 1;
+        prefs.edit().putInt(KEY_ROUNDS, rounds).apply();
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(26), dp(70), dp(26), dp(30));
@@ -587,6 +602,19 @@ public class MainActivity extends Activity {
     }
 
     // ---------- 工具 ----------
+    // 系统返回键：按当前页面逐级返回，首页才退出
+    @Override
+    public void onBackPressed() {
+        if ("quiz".equals(screen) || "overview".equals(screen) || "summary".equals(screen)) {
+            showHome();
+        } else if ("wrong".equals(screen) || "fav".equals(screen)
+                || "stats".equals(screen) || "settings".equals(screen)) {
+            showHome();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
     private void fill(View v) {
         container.removeAllViews();
         container.addView(v, new LinearLayout.LayoutParams(-1, -1));
@@ -676,6 +704,7 @@ public class MainActivity extends Activity {
 
     // ---------- 错题记录页 ----------
     private void showWrongList() {
+        screen = "wrong";
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(16), dp(20), dp(20));
@@ -837,6 +866,7 @@ public class MainActivity extends Activity {
     }
 
     private void showFavList() {
+        screen = "fav";
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(16), dp(20), dp(20));
@@ -953,6 +983,7 @@ public class MainActivity extends Activity {
     }
 
     private void showSettings() {
+        screen = "settings";
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(16), dp(20), dp(20));
@@ -987,6 +1018,31 @@ public class MainActivity extends Activity {
         });
 
         box.addView(row);
+
+        // 重置刷题进度
+        Button reset = btn("重置刷题进度", 15, Color.WHITE, mCard(12, C_RED));
+        LinearLayout.LayoutParams rlp2 = new LinearLayout.LayoutParams(-1, dp(52));
+        rlp2.setMargins(0, dp(18), 0, 0);
+        reset.setLayoutParams(rlp2);
+        reset.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("重置刷题进度")
+                        .setMessage("确定要重置所有刷题进度吗？之后将从头开始重新刷题。\n\n收藏、错题、学习统计和累计轮数都不会受影响。")
+                        .setPositiveButton("重置", new DialogInterface.OnClickListener() {
+                            @Override public void onClick(DialogInterface d, int w) {
+                                clearSession(MODE_SEQ);
+                                clearSession(MODE_RANDOM);
+                                clearSession(MODE_WRONG);
+                                toast("刷题进度已重置，重回第一词重新开始");
+                            }
+                        })
+                        .setNegativeButton("取消", null)
+                        .show();
+            }
+        });
+        box.addView(reset);
+
         fill(box);
     }
 
@@ -1123,6 +1179,7 @@ public class MainActivity extends Activity {
     }
 
     private void renderStatsPage() {
+        screen = "stats";
         HashMap<String, int[]> map = loadStatsMap();
         int streak = calcStreak(map);
         int totA = 0, totC = 0;
