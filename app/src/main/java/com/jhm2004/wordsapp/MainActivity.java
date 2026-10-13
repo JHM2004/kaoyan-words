@@ -1119,10 +1119,15 @@ public class MainActivity extends Activity {
     private View numBlock(String label, int value, int color) {
         LinearLayout b = new LinearLayout(this);
         b.setOrientation(LinearLayout.VERTICAL);
-        b.setGravity(Gravity.CENTER);
-        b.addView(tv(String.valueOf(value), 24, color, true));
+        b.setGravity(Gravity.CENTER_HORIZONTAL);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+        b.setLayoutParams(lp);
+        TextView n = tv(String.valueOf(value), 26, color, true);
+        n.setGravity(Gravity.CENTER_HORIZONTAL);
+        b.addView(n);
         TextView l = tv(label, 13, C_SUB, false);
-        l.setPadding(0, dp(2), 0, 0);
+        l.setGravity(Gravity.CENTER_HORIZONTAL);
+        l.setPadding(0, dp(4), 0, 0);
         b.addView(l);
         return b;
     }
