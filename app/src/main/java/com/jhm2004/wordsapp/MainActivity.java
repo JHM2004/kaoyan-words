@@ -29,12 +29,16 @@ import org.json.JSONObject;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -55,6 +59,7 @@ public class MainActivity extends Activity {
     private static final String KEY_WRONG = "wrong_set";
     private static final String KEY_FAV = "fav_set";
     private static final String KEY_SETTING_RMC = "rm_correct";
+    private static final String KEY_STATS = "stats";
     private static final String KEY_SESSION = "session";
 
     private static final int MODE_SEQ = 0;
@@ -181,6 +186,9 @@ public class MainActivity extends Activity {
         box.addView(homeBtn("设置", new Runnable() {
             @Override public void run() { showSettings(); }
         }));
+
+        // 我的努力：学习统计卡（首页末尾）
+        box.addView(buildStatsCard());
 
         fill(box);
     }
@@ -413,6 +421,7 @@ public class MainActivity extends Activity {
         selIdx[ptr] = i;
         selOk[ptr] = (i == correctIdx);
         recount();
+        recordAnswer(selOk[ptr]);
         statsView.setText("正确 " + correctCount + "   错误 " + wrongCount);
         if (selOk[ptr]) {
             clicked.setTextColor(Color.WHITE);
@@ -977,6 +986,266 @@ public class MainActivity extends Activity {
 
         box.addView(row);
         fill(box);
+    }
+
+    // ---------- 学习统计 ----------
+    private static class DayStat { String date; int answered; int correct; }
+
+    private static String todayStr() {
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+    }
+
+    private HashMap<String, int[]> loadStatsMap() {
+        HashMap<String, int[]> map = new HashMap<>();
+        try {
+            JSONObject o = new JSONObject(prefs.getString(KEY_STATS, "{}"));
+            java.util.Iterator<String> it = o.keys();
+            while (it.hasNext()) {
+                String k = it.next();
+                JSONArray a = o.getJSONArray(k);
+                if (a.length() >= 2) map.put(k, new int[]{a.getInt(0), a.getInt(1)});
+            }
+        } catch (Exception ignore) {}
+        return map;
+    }
+
+    private void saveStatsMap(HashMap<String, int[]> map) {
+        try {
+            JSONObject o = new JSONObject();
+            for (Map.Entry<String, int[]> e : map.entrySet()) {
+                JSONArray a = new JSONArray();
+                a.put(e.getValue()[0]); a.put(e.getValue()[1]);
+                o.put(e.getKey(), a);
+            }
+            prefs.edit().putString(KEY_STATS, o.toString()).apply();
+        } catch (Exception ignore) {}
+    }
+
+    private void recordAnswer(boolean correct) {
+        HashMap<String, int[]> map = loadStatsMap();
+        String d = todayStr();
+        int[] c = map.get(d);
+        if (c == null) c = new int[]{0, 0};
+        c[0]++;
+        if (correct) c[1]++;
+        map.put(d, c);
+        saveStatsMap(map);
+    }
+
+    // 连续签到天数（今天没答也从昨天开始算，断一天则清零）
+    private int calcStreak(HashMap<String, int[]> map) {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        Calendar cal = Calendar.getInstance();
+        int[] today = map.get(sdf.format(cal.getTime()));
+        if (today == null || today[0] <= 0) cal.add(Calendar.DAY_OF_YEAR, -1);
+        int streak = 0;
+        while (true) {
+            String ds = sdf.format(cal.getTime());
+            int[] v = map.get(ds);
+            if (v == null || v[0] <= 0) break;
+            streak++;
+            cal.add(Calendar.DAY_OF_YEAR, -1);
+        }
+        return streak;
+    }
+
+    private List<DayStat> last7Stats(HashMap<String, int[]> map) {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd (EEE)", Locale.CHINA);
+        Calendar cal = Calendar.getInstance();
+        List<DayStat> list = new ArrayList<>();
+        for (int i = 6; i >= 0; i--) {
+            Calendar c = (Calendar) cal.clone();
+            c.add(Calendar.DAY_OF_YEAR, -i);
+            String ds = sdf.format(c.getTime());
+            int[] v = map.get(new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(c.getTime()));
+            DayStat d = new DayStat();
+            d.date = ds;
+            d.answered = (v == null) ? 0 : v[0];
+            d.correct = (v == null) ? 0 : v[1];
+            list.add(d);
+        }
+        return list;
+    }
+
+    // 首页末尾的统计卡
+    private View buildStatsCard() {
+        HashMap<String, int[]> map = loadStatsMap();
+        int streak = calcStreak(map);
+        int totA = 0, totC = 0;
+        for (int[] v : map.values()) { totA += v[0]; totC += v[1]; }
+        int todayA = 0, todayC = 0;
+        int[] tv = map.get(todayStr());
+        if (tv != null) { todayA = tv[0]; todayC = tv[1]; }
+
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable g = mCard(16, C_CARD);
+        g.setStroke(dp(1), C_LINE);
+        card.setBackground(g);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(24), 0, 0);
+        card.setLayoutParams(lp);
+        card.setPadding(dp(16), dp(14), dp(16), dp(6));
+
+        // 标题 + 连续天数（火苗）
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = tv("我的努力", 16, C_TEXT, true);
+        head.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView fire = tv("🔥 连续 " + streak + (streak <= 1 ? " 天" : " 天"), 15, 0xFFF59E0B, true);
+        head.addView(fire);
+        card.addView(head);
+
+        // 三个数字块
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, dp(14), 0, dp(8));
+        row.addView(numBlock("今日刷题", todayA, 0xFF22C55E));
+        row.addView(numBlock("累计刷题", totA, C_BLUE));
+        row.addView(numBlock("总正确率", (totA == 0) ? 0 : Math.round(100f * totC / totA), 0xFFF59E0B));
+        card.addView(row);
+
+        // 查看趋势入口
+        Button more = btn("查看近 7 天趋势 → 了解自己的进步", 14, C_BLUE, mCard(12, 0xFFE8F0FE));
+        more.setAllCaps(false);
+        more.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showStats(); }
+        });
+        card.addView(more, new LinearLayout.LayoutParams(-1, dp(46)));
+
+        return card;
+    }
+
+    private View numBlock(String label, int value, int color) {
+        LinearLayout b = new LinearLayout(this);
+        b.setOrientation(LinearLayout.VERTICAL);
+        b.setGravity(Gravity.CENTER);
+        b.addView(tv(String.valueOf(value), 24, color, true));
+        TextView l = tv(label, 13, C_SUB, false);
+        l.setPadding(0, dp(2), 0, 0);
+        b.addView(l);
+        return b;
+    }
+
+    // 统计详情页
+    private void showStats() {
+        HashMap<String, int[]> map = loadStatsMap();
+        int streak = calcStreak(map);
+        int totA = 0, totC = 0;
+        for (int[] v : map.values()) { totA += v[0]; totC += v[1]; }
+        int todayA = 0, todayC = 0;
+        int[] tv = map.get(todayStr());
+        if (tv != null) { todayA = tv[0]; todayC = tv[1]; }
+        int todayPct = (todayA == 0) ? 0 : Math.round(100f * todayC / todayA);
+        int totPct = (totA == 0) ? 0 : Math.round(100f * totC / totA);
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(12), dp(18), dp(20));
+
+        // 头部：返回
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = tv("我的努力 · 学习统计", 18, C_TEXT, true);
+        head.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button back = btn("返回", 14, C_TEXT, mCard(10, C_CARD));
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showHome(); }
+        });
+        head.addView(back, new LinearLayout.LayoutParams(-2, dp(40)));
+        box.addView(head);
+
+        // 连续签到卡
+        LinearLayout streakCard = new LinearLayout(this);
+        streakCard.setOrientation(LinearLayout.HORIZONTAL);
+        streakCard.setGravity(Gravity.CENTER_VERTICAL);
+        streakCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+        streakCard.setBackground(mCard(14, 0xFF1F1E2D));
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-1, -2);
+        slp.setMargins(0, dp(12), 0, 0);
+        streakCard.setLayoutParams(slp);
+        TextView fire = tv("🔥", 30, 0xFFFCD34D, true);
+        streakCard.addView(fire);
+        LinearLayout sc = new LinearLayout(this);
+        sc.setOrientation(LinearLayout.VERTICAL);
+        streakCard.addView(sc, new LinearLayout.LayoutParams(0, -2, 1f));
+        sc.addView(tv("已连续坚持 " + streak + " 天", 18, Color.WHITE, true));
+        TextView sub = tv(streak > 0 ? "继续保持，火苗别灭！" : "今天还没开始，刷几题让火苗燃起来", 13, 0xFFB4B3C0, false);
+        sub.setPadding(0, dp(4), 0, 0);
+        sc.addView(sub);
+        box.addView(streakCard);
+
+        // 今日与累计
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.HORIZONTAL);
+        grid.setPadding(0, dp(14), 0, 0);
+        grid.addView(bigBlock("今日刷题", todayA, "题", 0xFF22C55E));
+        grid.addView(bigBlock("今日正确率", todayPct, "%", 0xFF22C55E));
+        grid.addView(bigBlock("累计刷题", totA, "题", C_BLUE));
+        grid.addView(bigBlock("累计正确率", totPct, "%", 0xFFF59E0B));
+        box.addView(grid);
+
+        TextView trendTitle = tv("近 7 天趋势", 16, C_TEXT, true);
+        trendTitle.setPadding(0, dp(14), 0, dp(6));
+        box.addView(trendTitle);
+
+        for (DayStat d : last7Stats(map)) {
+            box.addView(trendRow(d));
+        }
+
+        TextView empty = tv((totA == 0) ? "还没有答题记录，去刷几题吧。" : "", 13, C_SUB, false);
+        if (totA == 0) { empty.setPadding(0, dp(8), 0, 0); box.addView(empty); }
+
+        fill(box);
+    }
+
+    private View bigBlock(String label, int value, String unit, int color) {
+        LinearLayout b = new LinearLayout(this);
+        b.setOrientation(LinearLayout.VERTICAL);
+        b.setGravity(Gravity.CENTER);
+        b.setBackground(mCard(10, C_CARD));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(86), 1f);
+        lp.setMargins(dp(3), 0, dp(3), 0);
+        b.setLayoutParams(lp);
+        b.addView(tv(value + unit, 20, color, true));
+        TextView l = tv(label, 12, C_SUB, false);
+        l.setPadding(0, dp(4), 0, 0);
+        b.addView(l);
+        return b;
+    }
+
+    private View trendRow(DayStat d) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(4), dp(6), dp(4), dp(6));
+        TextView dt = tv(d.date, 13, C_TEXT, false);
+        dt.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 0.62f));
+        row.addView(dt);
+
+        // 正确率进度条
+        LinearLayout barOuter = new LinearLayout(this);
+        barOuter.setBackground(mCard(5, 0xFFECE8DF));
+        barOuter.setLayoutParams(new LinearLayout.LayoutParams(0, dp(14), 1f));
+        int pct = (d.answered == 0) ? 0 : Math.round(100f * d.correct / d.answered);
+        if (pct > 0) {
+            View fillv = new View(this);
+            fillv.setBackground(mCard(5, pct >= 60 ? C_GREEN : (pct >= 40 ? 0xFFF59E0B : 0xFFEF4444)));
+            barOuter.addView(fillv, new LinearLayout.LayoutParams(0, -1, pct));
+            View spacer = new View(this);
+            barOuter.addView(spacer, new LinearLayout.LayoutParams(0, -1, Math.max(1, 100 - pct)));
+        }
+        row.addView(barOuter);
+
+        LinearLayout info = new LinearLayout(this);
+        info.setOrientation(LinearLayout.VERTICAL);
+        info.setGravity(Gravity.END);
+        info.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 0.5f));
+        info.addView(tv(d.answered + " 题", 14, C_TEXT, true));
+        TextView l = tv(d.correct + " 对 · " + pct + "%", 12, C_SUB, false);
+        l.setGravity(Gravity.END);
+        info.addView(l);
+        row.addView(info);
+        return row;
     }
 
     // ---------- 刷题进度持久化（按模式分别存储） ----------
