@@ -97,6 +97,7 @@ public class MainActivity extends Activity {
     private Button prevBtn;
     private int[] selIdx;
     private boolean[] selOk;
+    private long quizSeed;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -211,6 +212,7 @@ public class MainActivity extends Activity {
             Collections.shuffle(list);
             order = list;
             if (order.isEmpty()) { toast("没有可刷的单词"); showHome(); return; }
+            quizSeed = new Random().nextLong();
             quizTotal = order.size();
             initSel(quizTotal);
             ptr = 0;
@@ -232,6 +234,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < words.size(); i++) order.add(i);
         if (m == MODE_RANDOM) Collections.shuffle(order);
         if (order.isEmpty()) { toast("没有可刷的单词"); showHome(); return; }
+        quizSeed = new Random().nextLong();
         quizTotal = order.size();
         initSel(quizTotal);
         ptr = 0;
@@ -311,6 +314,26 @@ public class MainActivity extends Activity {
         nav.addView(nextBtn);
         box.addView(nav);
 
+        // 全览按钮（题目最下方）
+        Button overviewBtn = new Button(this);
+        overviewBtn.setText("全览 · 全部题目 ▦");
+        overviewBtn.setTextSize(13);
+        overviewBtn.setAllCaps(false);
+        overviewBtn.setTextColor(C_SUB);
+        GradientDrawable og = mCard(30, 0xFFF1EFE8);
+        og.setStroke(dp(1), C_LINE);
+        overviewBtn.setBackground(og);
+        LinearLayout.LayoutParams olp = new LinearLayout.LayoutParams(-2, dp(38));
+        olp.setMargins(0, dp(12), 0, 0);
+        overviewBtn.setLayoutParams(olp);
+        overviewBtn.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showOverview(); }
+        });
+        LinearLayout wrapOv = new LinearLayout(this);
+        wrapOv.setGravity(Gravity.CENTER_HORIZONTAL);
+        wrapOv.addView(overviewBtn);
+        box.addView(wrapOv);
+
         fill(box);
     }
 
@@ -330,12 +353,13 @@ public class MainActivity extends Activity {
         wordView.setText(wd.w);
         refreshFavBtn();
 
-        // 打乱选项（让正确选项均匀分布在各位置，整体更随机）
+        // 打乱选项（每题按固定种子生成一致排列，保证返回上一题时标注不错位）
+        Random rng = new Random(quizSeed + (long) ptr * 7919L);
         shown = new String[4];
-        int r = new Random().nextInt(4);
+        int r = rng.nextInt(4);
         shown[r] = wd.c;
         List<String> dist = new ArrayList<>(Arrays.asList(wd.d[0], wd.d[1], wd.d[2]));
-        Collections.shuffle(dist);
+        Collections.shuffle(dist, rng);
         int k = 0;
         for (int i = 0; i < 4; i++) if (i != r) shown[i] = dist.get(k++);
         correctIdx = r;
@@ -438,6 +462,87 @@ public class MainActivity extends Activity {
         selIdx = new int[n];
         selOk = new boolean[n];
         Arrays.fill(selIdx, -1);
+    }
+
+    // 重建答题界面（从全览返回或跳到某题时调用）
+    private void showQuizScreen() {
+        buildQuizBox();
+        showQuiz();
+    }
+
+    // ---------- 全览页：滑动词都总览，点题号跳转 ----------
+    private void showOverview() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(12), dp(16), dp(16));
+
+        // 顶部：标题 + 返回
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = tv("全览 · 第 " + (ptr + 1) + " / " + quizTotal + " 题", 17, C_TEXT, true);
+        head.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
+        Button back = btn("返回刷题", 14, C_TEXT, mCard(10, C_CARD));
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showQuizScreen(); }
+        });
+        head.addView(back, new LinearLayout.LayoutParams(-2, dp(40)));
+        box.addView(head);
+
+        // 图例
+        TextView legend = tv("绿=答对  红=答错  黄框=当前  灰框=未做", 13, C_SUB, false);
+        legend.setPadding(0, dp(12), 0, dp(8));
+        box.addView(legend);
+
+        // 网格（由外层滚动承载，可上下滑动）
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        int perRow = 5;
+        for (int i = 0; i < quizTotal; i += perRow) {
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            for (int j = 0; j < perRow && i + j < quizTotal; j++) {
+                row.addView(overviewCell(i + j));
+            }
+            grid.addView(row);
+        }
+        box.addView(grid);
+
+        fill(box);
+    }
+
+    private Button overviewCell(final int i) {
+        Button cell = new Button(this);
+        cell.setText(String.valueOf(i + 1));
+        cell.setTextSize(14);
+        cell.setAllCaps(false);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        lp.setMargins(dp(4), dp(4), dp(4), dp(4));
+        cell.setLayoutParams(lp);
+
+        boolean done = selIdx != null && selIdx[i] != -1;
+        if (done) {
+            bg(cell, selOk[i] ? C_GREEN : C_RED, 10);
+            cell.setTextColor(Color.WHITE);
+        } else {
+            bg(cell, C_CARD, 10);
+            cell.setTextColor(C_SUB);
+        }
+        if (i == ptr) {
+            GradientDrawable g = mCard(10, done ? (selOk[i] ? C_GREEN : C_RED) : C_CARD);
+            g.setStroke(dp(3), 0xFFFACC15);
+            cell.setBackground(g);
+        }
+        cell.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { gotoQuestion(i); }
+        });
+        return cell;
+    }
+
+    private void gotoQuestion(int i) {
+        if (i < 0 || i >= quizTotal) return;
+        ptr = i;
+        saveSession();
+        showQuizScreen();
     }
 
     private void advance() {
@@ -890,6 +995,7 @@ public class MainActivity extends Activity {
             JSONArray arr = new JSONArray();
             for (int i : order) arr.put(i);
             o.put("order", arr);
+            o.put("seed", quizSeed);
             JSONArray si = new JSONArray();
             for (int v : selIdx) si.put(v);
             o.put("sel", si);
@@ -914,6 +1020,7 @@ public class MainActivity extends Activity {
             order = new ArrayList<>();
             for (int i = 0; i < arr.length(); i++) order.add(arr.getInt(i));
             if (order.isEmpty() || ptr >= quizTotal) { clearSession(m); return false; }
+            quizSeed = o.optLong("seed", new Random().nextLong());
             // 恢复记分矩阵（旧版本无则初始化）
             initSel(quizTotal);
             JSONArray si = o.optJSONArray("sel");
