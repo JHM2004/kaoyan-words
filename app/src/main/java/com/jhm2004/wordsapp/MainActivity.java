@@ -103,8 +103,6 @@ public class MainActivity extends Activity {
     private int[] selIdx;
     private boolean[] selOk;
     private long quizSeed;
-    private int statsMode;
-    private int statsWeekOffset;
     private int statsMonthOffset;
     private String statsSel;
 
@@ -1091,7 +1089,7 @@ public class MainActivity extends Activity {
         card.addView(row);
 
         // 查看趋势入口
-        Button more = btn("查看近 7 天趋势 → 了解自己的进步", 14, C_BLUE, mCard(12, 0xFFE8F0FE));
+        Button more = btn("查看学习日历 → 回顾每一天的刷题", 14, C_BLUE, mCard(12, 0xFFE8F0FE));
         more.setAllCaps(false);
         more.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showStats(); }
@@ -1117,10 +1115,8 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    // 统计详情页（含可点击日历：周/月两种视图）
+    // 统计详情页（月份日历可视化）
     private void showStats() {
-        statsMode = 0;
-        statsWeekOffset = 0;
         statsMonthOffset = 0;
         statsSel = todayStr();
         renderStatsPage();
@@ -1183,44 +1179,27 @@ public class MainActivity extends Activity {
         grid.addView(bigBlock("累计正确率", totPct, "%", 0xFFF59E0B));
         box.addView(grid);
 
-        // 周/月切换
-        LinearLayout togg = new LinearLayout(this);
-        togg.setOrientation(LinearLayout.HORIZONTAL);
-        togg.setGravity(Gravity.CENTER);
-        togg.setPadding(0, dp(16), 0, dp(2));
-        togg.addView(toggleBtn("周", statsMode == 0), new LinearLayout.LayoutParams(0, dp(38), 1f));
-        togg.addView(toggleBtn("月", statsMode == 1), new LinearLayout.LayoutParams(0, dp(38), 1f));
-        box.addView(togg);
-
-        // 导航：◀ 标题 ▶
+        // 月份导航：◀ 标题 ▶
         LinearLayout nav = new LinearLayout(this);
         nav.setGravity(Gravity.CENTER_VERTICAL);
-        nav.setPadding(0, dp(6), 0, dp(6));
+        nav.setPadding(0, dp(18), 0, dp(8));
         Button pre = btn("◀", 16, C_TEXT, mCard(10, C_LINE));
         pre.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                if (statsMode == 0) statsWeekOffset--;
-                else statsMonthOffset--;
-                renderStatsPage();
-            }
+            @Override public void onClick(View v) { statsMonthOffset--; renderStatsPage(); }
         });
         nav.addView(pre, new LinearLayout.LayoutParams(-2, dp(40)));
-        TextView navTitle = tv(statsMode == 0 ? weekTitle() : monthTitle(), 16, C_TEXT, true);
+        TextView navTitle = tv(monthTitle(), 17, C_TEXT, true);
         navTitle.setGravity(Gravity.CENTER);
         nav.addView(navTitle, new LinearLayout.LayoutParams(0, -2, 1f));
         Button nxt = btn("▶", 16, C_TEXT, mCard(10, C_LINE));
         nxt.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                if (statsMode == 0) statsWeekOffset++;
-                else statsMonthOffset++;
-                renderStatsPage();
-            }
+            @Override public void onClick(View v) { statsMonthOffset++; renderStatsPage(); }
         });
         nav.addView(nxt, new LinearLayout.LayoutParams(-2, dp(40)));
         box.addView(nav);
 
-        // 日历主体
-        box.addView(statsMode == 0 ? weekCalendar(map) : monthCalendar(map));
+        // 日历主体（月份视图）
+        box.addView(monthCalendar(map));
 
         // 选中日期详情
         box.addView(dayDetail(map));
@@ -1229,39 +1208,6 @@ public class MainActivity extends Activity {
         if (totA == 0) { empty.setPadding(0, dp(6), 0, 0); box.addView(empty); }
 
         fill(box);
-    }
-
-    private Button toggleBtn(String label, boolean active) {
-        Button b = btn(label, 15, active ? Color.WHITE : C_SUB, mCard(10, active ? C_BLUE : C_LINE));
-        b.setAllCaps(false);
-        if (statsMode == 0 && label.equals("周")) {
-            b.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { /* already */ } });
-        } else if (statsMode == 1 && label.equals("月")) {
-            b.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { /* already */ } });
-        } else {
-            final boolean isMonth = label.equals("月");
-            b.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View v) { statsMode = isMonth ? 1 : 0; renderStatsPage(); }
-            });
-        }
-        return b;
-    }
-
-    private String weekTitle() {
-        Calendar mon = weekMonday();
-        SimpleDateFormat f = new SimpleDateFormat("M月d日", Locale.CHINA);
-        Calendar sun = (Calendar) mon.clone();
-        sun.add(Calendar.DAY_OF_YEAR, 6);
-        return f.format(mon.getTime()) + " - " + f.format(sun.getTime());
-    }
-
-    private Calendar weekMonday() {
-        Calendar mon = Calendar.getInstance();
-        int dow = mon.get(Calendar.DAY_OF_WEEK); // 1=日,2=一
-        int diff = (dow + 5) % 7; // 回退到周一
-        mon.add(Calendar.DAY_OF_YEAR, -diff);
-        mon.add(Calendar.DAY_OF_YEAR, statsWeekOffset * 7);
-        return mon;
     }
 
     private String monthTitle() {
@@ -1276,65 +1222,6 @@ public class MainActivity extends Activity {
         if (n < 15) return 0xFF7FC98A;
         if (n < 30) return 0xFF43B75C;
         return 0xFF22C55E;
-    }
-
-    // 周视图：周一~周日 7 列
-    private View weekCalendar(HashMap<String, int[]> map) {
-        SimpleDateFormat key = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
-        SimpleDateFormat label = new SimpleDateFormat("MM-dd", Locale.CHINA);
-        Calendar mon = weekMonday();
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setBackground(mCard(12, C_CARD));
-        box.setPadding(dp(10), dp(10), dp(10), dp(10));
-
-        // 星期表头
-        LinearLayout hdr = new LinearLayout(this);
-        hdr.setOrientation(LinearLayout.HORIZONTAL);
-        String[] wd = {"一", "二", "三", "四", "五", "六", "日"};
-        for (String d : wd) {
-            TextView t = tv(d, 13, C_SUB, false);
-            t.setGravity(Gravity.CENTER);
-            hdr.addView(t, new LinearLayout.LayoutParams(0, dp(26), 1f));
-        }
-        box.addView(hdr);
-
-        // 每天一列
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        for (int i = 0; i < 7; i++) {
-            Calendar d = (Calendar) mon.clone();
-            d.add(Calendar.DAY_OF_YEAR, i);
-            String ds = key.format(d.getTime());
-            int[] v = map.get(ds);
-            int n = (v == null) ? 0 : v[0];
-            boolean today = ds.equals(todayStr());
-            final String fds = ds;
-
-            LinearLayout cell = new LinearLayout(this);
-            cell.setOrientation(LinearLayout.VERTICAL);
-            cell.setGravity(Gravity.CENTER);
-            cell.setPadding(0, dp(6), 0, dp(6));
-            GradientDrawable cg = mCard(8, (n > 0) ? statsColor(n) : C_CARD);
-            if (today) cg.setStroke(dp(1), 0xFFF59E0B);
-            cell.setBackground(cg);
-            cell.setOnClickListener(new View.OnClickListener() {
-                @Override public void onClick(View v) { statsSel = fds; renderStatsPage(); }
-            });
-            LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, dp(66), 1f);
-            clp.setMargins(dp(2), dp(2), dp(2), dp(2));
-            cell.setLayoutParams(clp);
-            cell.addView(tv(label.format(d.getTime()), 12, 0xFF6B7280, false));
-            if (n > 0) {
-                cell.addView(tv(String.valueOf(n), 18, 0xFF206A52, true));
-                cell.addView(tv("题", 9, 0xFF206A52, false));
-            } else {
-                cell.addView(tv("·", 18, 0xFFB7B2A7, true));
-            }
-            row.addView(cell);
-        }
-        box.addView(row);
-        return box;
     }
 
     // 月视图：日历网格
@@ -1353,10 +1240,11 @@ public class MainActivity extends Activity {
         box.setPadding(dp(10), dp(10), dp(10), dp(10));
 
         String[] wt = {"日", "一", "二", "三", "四", "五", "六"};
+        int[] wc = {0xFFEF4444, C_SUB, C_SUB, C_SUB, C_SUB, C_SUB, 0xFFEF4444};
         LinearLayout hdr = new LinearLayout(this);
         hdr.setOrientation(LinearLayout.HORIZONTAL);
-        for (String w : wt) {
-            TextView t = tv(w, 13, C_SUB, false);
+        for (int i = 0; i < 7; i++) {
+            TextView t = tv(wt[i], 13, wc[i], true);
             t.setGravity(Gravity.CENTER);
             hdr.addView(t, new LinearLayout.LayoutParams(0, dp(26), 1f));
         }
@@ -1384,7 +1272,7 @@ public class MainActivity extends Activity {
                 int dd = rows[r][c];
                 if (dd == 0) {
                     View blank = new View(this);
-                    row.addView(blank, new LinearLayout.LayoutParams(0, dp(54), 1f));
+                    row.addView(blank, new LinearLayout.LayoutParams(0, dp(64), 1f));
                     continue;
                 }
                 Calendar d = Calendar.getInstance();
@@ -1398,22 +1286,29 @@ public class MainActivity extends Activity {
                 LinearLayout cell = new LinearLayout(this);
                 cell.setOrientation(LinearLayout.VERTICAL);
                 cell.setGravity(Gravity.CENTER);
-                cell.setPadding(0, dp(4), 0, dp(2));
+                cell.setPadding(0, dp(4), 0, dp(4));
                 GradientDrawable cg = mCard(8, (n > 0) ? statsColor(n) : C_CARD);
-                if (today) cg.setStroke(dp(1), 0xFFF59E0B);
+                if (today) cg.setStroke(dp(2), C_BLUE);
                 cell.setBackground(cg);
                 cell.setClickable(true);
                 cell.setOnClickListener(new View.OnClickListener() {
                     @Override public void onClick(View v) { statsSel = fds; renderStatsPage(); }
                 });
-                LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, dp(54), 1f);
+                LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, dp(64), 1f);
                 clp.setMargins(dp(2), dp(2), dp(2), dp(2));
                 cell.setLayoutParams(clp);
-                cell.addView(tv(String.valueOf(dd), 13, 0xFF4B5563, false));
+
+                TextView dnum = tv(today ? dd + " 今" : String.valueOf(dd), 14, today ? C_BLUE : 0xFF4B5563, today);
+                dnum.setGravity(Gravity.CENTER);
+                cell.addView(dnum);
                 if (n > 0) {
-                    cell.addView(tv(String.valueOf(n), 15, 0xFF206A52, true));
+                    TextView cnt = tv(String.valueOf(n), 15, 0xFF1F6B45, true);
+                    cnt.setGravity(Gravity.CENTER);
+                    cell.addView(cnt);
                 } else {
-                    cell.addView(tv("·", 13, 0xFFC9C3B8, false));
+                    TextView ed = tv("·", 14, 0xFFCFC9BD, true);
+                    ed.setGravity(Gravity.CENTER);
+                    cell.addView(ed);
                 }
                 row.addView(cell);
             }
@@ -1443,19 +1338,21 @@ public class MainActivity extends Activity {
         boolean isToday = statsSel.equals(todayStr());
 
         TextView head = tv(label.format(dateOf(statsSel)) + (isToday ? "（今天）" : ""), 15, C_TEXT, true);
+        head.setGravity(Gravity.CENTER);
         card.addView(head);
 
         if (n == 0) {
-            TextView t = tv("这一天没有刷题记录，点击日历上方的月份/周可切换其他日期浏览。", 13, C_SUB, false);
+            TextView t = tv("这一天没有刷题记录，点上方 ◀ ▶ 切换月份浏览其他日期。", 13, C_SUB, false);
+            t.setGravity(Gravity.CENTER);
             t.setPadding(0, dp(8), 0, 0);
             card.addView(t);
         } else {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setPadding(0, dp(10), 0, 0);
+            row.setPadding(0, dp(12), 0, 0);
             row.addView(miniBlock("刷题", n + " 题", 0xFF22C55E));
             row.addView(miniBlock("答对", c + " 题", C_BLUE));
-            row.addView(miniBlock("正确率", pct + " %", 0xFFF59E0B));
+            row.addView(miniBlock("正确率", pct + "%", 0xFFF59E0B));
             card.addView(row);
         }
         return card;
