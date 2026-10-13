@@ -1382,13 +1382,16 @@ public class MainActivity extends Activity {
     private View bigBlock(String label, int value, String unit, int color) {
         LinearLayout b = new LinearLayout(this);
         b.setOrientation(LinearLayout.VERTICAL);
-        b.setGravity(Gravity.CENTER);
         b.setBackground(mCard(10, C_CARD));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(86), 1f);
         lp.setMargins(dp(3), 0, dp(3), 0);
         b.setLayoutParams(lp);
-        b.addView(tv(value + unit, 20, color, true));
+        b.setGravity(Gravity.CENTER_HORIZONTAL);
+        TextView val = tv(value + unit, 20, color, true);
+        val.setGravity(Gravity.CENTER_HORIZONTAL);
+        b.addView(val);
         TextView l = tv(label, 12, C_SUB, false);
+        l.setGravity(Gravity.CENTER_HORIZONTAL);
         l.setPadding(0, dp(4), 0, 0);
         b.addView(l);
         return b;
