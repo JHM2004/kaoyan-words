@@ -358,6 +358,7 @@ public class MainActivity extends Activity {
 
     // ---------- 显示一题 ----------
     private void showQuiz() {
+        screen = "quiz";
         answered = (selIdx != null && selIdx[ptr] != -1);
         nextBtn.setVisibility(View.GONE);
         prevBtn.setVisibility(ptr > 0 ? View.VISIBLE : View.GONE);
@@ -578,9 +579,11 @@ public class MainActivity extends Activity {
     private void showSummary() {
         screen = "summary";
         clearSession(mode);
-        // 完整刷完一轮，累计轮数 +1
-        int rounds = prefs.getInt(KEY_ROUNDS, 0) + 1;
-        prefs.edit().putInt(KEY_ROUNDS, rounds).apply();
+        // 完整刷完一轮累计轮数（错题重刷不计入总轮数）
+        if (mode != MODE_WRONG) {
+            int rounds = prefs.getInt(KEY_ROUNDS, 0) + 1;
+            prefs.edit().putInt(KEY_ROUNDS, rounds).apply();
+        }
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(26), dp(70), dp(26), dp(30));
