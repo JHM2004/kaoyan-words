@@ -27,7 +27,9 @@ import android.widget.Switch;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -67,15 +69,29 @@ public class MainActivity extends Activity {
     private static final int MODE_RANDOM = 1;
     private static final int MODE_WRONG = 2;
 
+    // 两个独立的词库：考研词汇 / 实战单词
+    private static final int BANK_STUDY = 0;
+    private static final int BANK_PRACTICE = 1;
+
     private static class Word {
         final String w, c; final String[] d;
         Word(String w, String c, String[] d) { this.w = w; this.c = c; this.d = d; }
     }
 
-    private final List<Word> words = new ArrayList<>();
-    private final Map<String, Integer> wordIndex = new HashMap<>();
-    private final Set<String> wrongSet = new HashSet<>();
-    private final Set<String> favSet = new HashSet<>();
+    // 考研词汇（words.json，原有两词库之一）
+    private final List<Word> studyWords = new ArrayList<>();
+    private final Map<String, Integer> studyIndex = new HashMap<>();
+    // 实战单词（practice_words.txt，与考研词汇完全独立）
+    private final List<Word> practiceWords = new ArrayList<>();
+    private final Map<String, Integer> practiceIndex = new HashMap<>();
+
+    private int bank = BANK_STUDY;
+
+    // 当前生效词库的引用（切换词库时指向对应数据）
+    private List<Word> words = studyWords;
+    private Map<String, Integer> wordIndex = studyIndex;
+    private Set<String> wrongSet = new HashSet<>();
+    private Set<String> favSet = new HashSet<>();
     private boolean rmAfterCorrect;
     private final Handler handler = new Handler();
     private SharedPreferences prefs;
@@ -92,6 +108,7 @@ public class MainActivity extends Activity {
 
     // 布局成员
     private LinearLayout container;
+    private TextView headerTitle;
     private LinearLayout progressBarWrap;
     private TextView progressLabel;
     private ProgressBar progressBar;
@@ -113,25 +130,25 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         loadWords();
-        loadWrongFromPrefs();
-        loadFavFromPrefs();
+        loadPracticeWords();
         loadSettings();
         buildShell();
+        bindBank(BANK_STUDY);
         showHome();
     }
 
     // ---------- 构建静态外壳 ----------
     private void buildShell() {
         // 标题栏
-        final TextView title = new TextView(this);
-        title.setText("考研单词刷题");
-        title.setTextSize(18);
-        title.setTextColor(Color.WHITE);
-        title.setGravity(Gravity.CENTER);
+        headerTitle = new TextView(this);
+        headerTitle.setText("考研单词刷题");
+        headerTitle.setTextSize(18);
+        headerTitle.setTextColor(Color.WHITE);
+        headerTitle.setGravity(Gravity.CENTER);
 
         final Button back = btn("返回首页", 13, C_SUB, mCard(12, 0xFFEBE7DE));
         back.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showHome(); }
+            @Override public void onClick(View v) { goBankHome(); }
         });
 
         LinearLayout header = new LinearLayout(this);
@@ -140,7 +157,7 @@ public class MainActivity extends Activity {
         LinearLayout topRow = new LinearLayout(this);
         topRow.setGravity(Gravity.CENTER_VERTICAL);
         topRow.addView(back, new LinearLayout.LayoutParams(-2, dp(36)));
-        topRow.addView(title, new LinearLayout.LayoutParams(0, dp(36), 1f));
+        topRow.addView(headerTitle, new LinearLayout.LayoutParams(0, dp(36), 1f));
         header.addView(topRow);
         GradientDrawable hg = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
                 new int[]{C_BLUE, C_BLUE_DARK});
@@ -161,20 +178,33 @@ public class MainActivity extends Activity {
 
     // ---------- 首页 ----------
     private void showHome() {
-        screen = "home";
+        bindBank(BANK_STUDY);
+        renderHome(false);
+    }
+
+    // 实战单词板块首页（与考研词汇完全独立）
+    private void showPracticeHome() {
+        bindBank(BANK_PRACTICE);
+        renderHome(true);
+    }
+
+    private void renderHome(boolean practice) {
+        screen = practice ? "practice_home" : "home";
+        if (headerTitle != null) headerTitle.setText(practice ? "实战单词刷题" : "考研单词刷题");
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(26), dp(50), dp(26), dp(30));
 
-        TextView title = tv("考研单词", 28, C_TEXT, true);
+        TextView title = tv(practice ? "实战单词" : "考研单词", 28, C_TEXT, true);
         title.setGravity(Gravity.CENTER);
-        TextView sub = tv("共 " + words.size() + " 个单词 · 每题四选一", 14, C_SUB, false);
+        String tip = practice && words.isEmpty() ? "暂无单词，请编辑 practice_words.txt" : "共 " + words.size() + " 个单词 · 每题四选一";
+        TextView sub = tv(tip, 14, C_SUB, false);
         sub.setGravity(Gravity.CENTER);
         sub.setPadding(0, dp(6), 0, dp(12));
         box.addView(title);
         box.addView(sub);
 
-        int rounds = prefs.getInt(KEY_ROUNDS, 0);
+        int rounds = prefs.getInt(roundsKey(), 0);
         TextView round = tv("已完整刷完 " + rounds + " 轮 · 加油！", 14, C_BLUE, true);
         round.setGravity(Gravity.CENTER);
         round.setPadding(0, 0, 0, dp(20));
@@ -194,6 +224,13 @@ public class MainActivity extends Activity {
         box.addView(homeBtn("收藏夹（" + favSet.size() + " 个）", new Runnable() {
             @Override public void run() { showFavList(); }
         }));
+        if (practice) {
+            box.addView(homeBtnColor("返回考研单词首页", C_SUB, new Runnable() { @Override public void run() { showHome(); } }));
+        } else {
+            box.addView(homeBtnColor("实战单词（" + practiceWords.size() + " 个）", 0xFF7C3AED, new Runnable() {
+                @Override public void run() { showPracticeHome(); }
+            }));
+        }
         box.addView(homeBtn("设置", new Runnable() {
             @Override public void run() { showSettings(); }
         }));
@@ -205,7 +242,11 @@ public class MainActivity extends Activity {
     }
 
     private Button homeBtn(String label, final Runnable action) {
-        Button b = btn(label, 17, -1, mCard(16, C_BLUE));
+        return homeBtnColor(label, C_BLUE, action);
+    }
+
+    private Button homeBtnColor(String label, int color, final Runnable action) {
+        Button b = btn(label, 17, -1, mCard(16, color));
         b.setTextColor(Color.WHITE);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(58));
         lp.setMargins(0, dp(10), 0, 0);
@@ -230,7 +271,7 @@ public class MainActivity extends Activity {
             }
             Collections.shuffle(list);
             order = list;
-            if (order.isEmpty()) { toast("没有可刷的单词"); showHome(); return; }
+            if (order.isEmpty()) { toast("没有可刷的单词"); goBankHome(); return; }
             quizSeed = new Random().nextLong();
             quizTotal = order.size();
             initSel(quizTotal);
@@ -252,7 +293,7 @@ public class MainActivity extends Activity {
         order = new ArrayList<>();
         for (int i = 0; i < words.size(); i++) order.add(i);
         if (m == MODE_RANDOM) Collections.shuffle(order);
-        if (order.isEmpty()) { toast("没有可刷的单词"); showHome(); return; }
+        if (order.isEmpty()) { toast("没有可刷的单词"); goBankHome(); return; }
         quizSeed = new Random().nextLong();
         quizTotal = order.size();
         initSel(quizTotal);
@@ -581,8 +622,8 @@ public class MainActivity extends Activity {
         clearSession(mode);
         // 完整刷完一轮累计轮数（错题重刷不计入总轮数）
         if (mode != MODE_WRONG) {
-            int rounds = prefs.getInt(KEY_ROUNDS, 0) + 1;
-            prefs.edit().putInt(KEY_ROUNDS, rounds).apply();
+            int rounds = prefs.getInt(roundsKey(), 0) + 1;
+            prefs.edit().putInt(roundsKey(), rounds).apply();
         }
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -600,7 +641,7 @@ public class MainActivity extends Activity {
         box.addView(ok);
         box.addView(no);
 
-        box.addView(homeBtn("返回首页", new Runnable() { @Override public void run() { showHome(); } }));
+        box.addView(homeBtn("返回首页", new Runnable() { @Override public void run() { goBankHome(); } }));
         fill(box);
     }
 
@@ -608,14 +649,20 @@ public class MainActivity extends Activity {
     // 系统返回键：按当前页面逐级返回，首页才退出
     @Override
     public void onBackPressed() {
-        if ("quiz".equals(screen) || "overview".equals(screen) || "summary".equals(screen)) {
-            showHome();
-        } else if ("wrong".equals(screen) || "fav".equals(screen)
+        if ("quiz".equals(screen) || "overview".equals(screen) || "summary".equals(screen)
+                || "wrong".equals(screen) || "fav".equals(screen)
                 || "stats".equals(screen) || "settings".equals(screen)) {
+            goBankHome();
+        } else if ("practice_home".equals(screen)) {
             showHome();
         } else {
             super.onBackPressed();
         }
+    }
+
+    // 返回当前词库的首页（考研 / 实战）
+    private void goBankHome() {
+        if (bank == BANK_PRACTICE) showPracticeHome(); else showHome();
     }
 
     private void fill(View v) {
@@ -675,34 +722,107 @@ public class MainActivity extends Activity {
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
                 JSONArray dd = o.getJSONArray("d");
-                words.add(new Word(o.getString("w"), o.getString("c"),
+                studyWords.add(new Word(o.getString("w"), o.getString("c"),
                         new String[]{dd.getString(0), dd.getString(1), dd.getString(2)}));
-                wordIndex.put(o.getString("w"), i);
+                studyIndex.put(o.getString("w"), studyWords.size() - 1);
             }
         } catch (Exception e) {
-            words.clear();
+            studyWords.clear();
+            studyIndex.clear();
         }
     }
 
-    private void loadWrongFromPrefs() {
-        wrongSet.clear();
+    // 实战单词：从 assets/practice_words.txt 读取，每行“英文 中文释义”
+    // 干扰项在运行时从本板块其他单词的释义中生成，保证三项均来自其他单词的中文
+    private void loadPracticeWords() {
         try {
-            for (String s : prefs.getStringSet(KEY_WRONG, new HashSet<String>())) {
-                // 兼容旧版本：数字索引 -> 转为单词
-                Integer idx = null;
-                try { idx = Integer.parseInt(s); } catch (NumberFormatException ignore) {}
-                if (idx != null) {
-                    if (idx >= 0 && idx < words.size()) s = words.get(idx).w; else continue;
+            InputStream is = getAssets().open("practice_words.txt");
+            BufferedReader br = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
+            String line;
+            while ((line = br.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                // 英文单词/短语由 ASCII 组成，中文释义从第一个非 ASCII 字符开始
+                int cut = -1;
+                for (int k = 0; k < line.length(); k++) {
+                    if (line.charAt(k) > 127) { cut = k; break; }
                 }
-                if (wordIndex.containsKey(s)) wrongSet.add(s);
+                if (cut <= 0) continue;
+                String en = line.substring(0, cut).trim();
+                String zh = line.substring(cut).trim();
+                if (en.isEmpty() || zh.isEmpty()) continue;
+                practiceWords.add(new Word(en, zh, new String[3]));
+                practiceIndex.put(en, practiceWords.size() - 1);
             }
-        } catch (Exception ignore) {}
+            br.close();
+        } catch (Exception e) {
+            practiceWords.clear();
+            practiceIndex.clear();
+        }
+        // 为每个词固定生成 3 个干扰项（同一次安装内结果稳定）
+        List<String> meanings = new ArrayList<>();
+        for (Word w : practiceWords) meanings.add(w.c);
+        for (int i = 0; i < practiceWords.size(); i++) {
+            Word w = practiceWords.get(i);
+            Random r = new Random(90000L + i);
+            List<String> pool = new ArrayList<>();
+            for (int j = 0; j < meanings.size(); j++) {
+                if (j != i && !meanings.get(j).equals(w.c)) pool.add(meanings.get(j));
+            }
+            Collections.shuffle(pool, r);
+            List<String> pick = new ArrayList<>();
+            for (String m : pool) {
+                if (!pick.contains(m)) pick.add(m);
+                if (pick.size() == 3) break;
+            }
+            while (pick.size() < 3) pick.add("（暂无）");
+            w.d[0] = pick.get(0);
+            w.d[1] = pick.get(1);
+            w.d[2] = pick.get(2);
+        }
     }
 
+    // 切换当前词库，并加载该词库独立的错题/收藏
+    private void bindBank(int b) {
+        bank = b;
+        if (b == BANK_PRACTICE) {
+            words = practiceWords;
+            wordIndex = practiceIndex;
+        } else {
+            words = studyWords;
+            wordIndex = studyIndex;
+        }
+        wrongSet = new HashSet<>();
+        favSet = new HashSet<>();
+        loadBankState();
+        if (headerTitle != null) headerTitle.setText(b == BANK_PRACTICE ? "实战单词刷题" : "考研单词刷题");
+    }
+
+    private void loadBankState() {
+        wrongSet.clear();
+        favSet.clear();
+        for (String s : prefs.getStringSet(wrongKey(), new HashSet<String>())) {
+            // 兼容旧版本：数字索引 -> 转为单词
+            Integer idx = null;
+            try { idx = Integer.parseInt(s); } catch (NumberFormatException ignore) {}
+            if (idx != null) {
+                if (idx >= 0 && idx < words.size()) s = words.get(idx).w; else continue;
+            }
+            if (wordIndex.containsKey(s)) wrongSet.add(s);
+        }
+        for (String s : prefs.getStringSet(favKey(), new HashSet<String>())) {
+            if (wordIndex.containsKey(s)) favSet.add(s);
+        }
+    }
+
+    private String wrongKey() { return bank == BANK_PRACTICE ? KEY_WRONG + ".practice" : KEY_WRONG; }
+    private String favKey() { return bank == BANK_PRACTICE ? KEY_FAV + ".practice" : KEY_FAV; }
+    private String statsKey() { return bank == BANK_PRACTICE ? KEY_STATS + ".practice" : KEY_STATS; }
+    private String roundsKey() { return bank == BANK_PRACTICE ? KEY_ROUNDS + ".practice" : KEY_ROUNDS; }
+
     private void saveWrong() {
-        HashSet<String> set = new HashSet<>();
-        for (String w : wrongSet) set.add(w);
-        prefs.edit().putStringSet(KEY_WRONG, set).apply();
+        HashSet<String> set = new HashSet<>(wrongSet);
+        prefs.edit().putStringSet(wrongKey(), set).apply();
     }
 
     // ---------- 错题记录页 ----------
@@ -827,19 +947,9 @@ public class MainActivity extends Activity {
     }
 
     // ---------- 收藏功能 ----------
-    private void loadFavFromPrefs() {
-        favSet.clear();
-        try {
-            for (String s : prefs.getStringSet(KEY_FAV, new HashSet<String>())) {
-                if (wordIndex.containsKey(s)) favSet.add(s);
-            }
-        } catch (Exception ignore) {}
-    }
-
     private void saveFav() {
-        HashSet<String> set = new HashSet<>();
-        for (String w : favSet) set.add(w);
-        prefs.edit().putStringSet(KEY_FAV, set).apply();
+        HashSet<String> set = new HashSet<>(favSet);
+        prefs.edit().putStringSet(favKey(), set).apply();
     }
 
     private void refreshFavBtn() {
@@ -1031,7 +1141,7 @@ public class MainActivity extends Activity {
             @Override public void onClick(View v) {
                 new AlertDialog.Builder(MainActivity.this)
                         .setTitle("重置刷题进度")
-                        .setMessage("确定要重置所有刷题进度吗？之后将从头开始重新刷题。\n\n收藏、错题、学习统计和累计轮数都不会受影响。")
+                        .setMessage("确定要重置当前词库的所有刷题进度吗？之后将从头开始重新刷题。\n\n收藏、错题、学习统计和累计轮数都不会受影响。")
                         .setPositiveButton("重置", new DialogInterface.OnClickListener() {
                             @Override public void onClick(DialogInterface d, int w) {
                                 clearSession(MODE_SEQ);
@@ -1059,7 +1169,7 @@ public class MainActivity extends Activity {
     private HashMap<String, int[]> loadStatsMap() {
         HashMap<String, int[]> map = new HashMap<>();
         try {
-            JSONObject o = new JSONObject(prefs.getString(KEY_STATS, "{}"));
+            JSONObject o = new JSONObject(prefs.getString(statsKey(), "{}"));
             java.util.Iterator<String> it = o.keys();
             while (it.hasNext()) {
                 String k = it.next();
@@ -1078,7 +1188,7 @@ public class MainActivity extends Activity {
                 a.put(e.getValue()[0]); a.put(e.getValue()[1]);
                 o.put(e.getKey(), a);
             }
-            prefs.edit().putString(KEY_STATS, o.toString()).apply();
+            prefs.edit().putString(statsKey(), o.toString()).apply();
         } catch (Exception ignore) {}
     }
 
@@ -1204,7 +1314,7 @@ public class MainActivity extends Activity {
         head.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         Button back = btn("返回", 14, C_TEXT, mCard(10, C_CARD));
         back.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { showHome(); }
+            @Override public void onClick(View v) { goBankHome(); }
         });
         head.addView(back, new LinearLayout.LayoutParams(-2, dp(40)));
         box.addView(head);
@@ -1457,9 +1567,9 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    // ---------- 刷题进度持久化（按模式分别存储） ----------
-    private static String sessionKey(int m) {
-        return KEY_SESSION + "." + m;
+    // ---------- 刷题进度持久化（按词库、按模式分别存储） ----------
+    private String sessionKey(int m) {
+        return bank == BANK_PRACTICE ? KEY_SESSION + ".p." + m : KEY_SESSION + "." + m;
     }
 
     private void saveSession() {
