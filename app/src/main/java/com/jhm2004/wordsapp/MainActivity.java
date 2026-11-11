@@ -1607,6 +1607,12 @@ public class MainActivity extends Activity {
             JSONArray arr = o.getJSONArray("order");
             order = new ArrayList<>();
             for (int i = 0; i < arr.length(); i++) order.add(arr.getInt(i));
+            // 词库大小变了（比如新增了单词）旧 order 不再有效，放弃恢复开新一轮
+            if (order.size() != words.size()) { clearSession(m); return false; }
+            // 校验每个索引都落在当前词库范围内
+            for (int idx : order) {
+                if (idx < 0 || idx >= words.size()) { clearSession(m); return false; }
+            }
             if (order.isEmpty() || ptr >= quizTotal) { clearSession(m); return false; }
             quizSeed = o.optLong("seed", new Random().nextLong());
             // 恢复记分矩阵（旧版本无则初始化）
