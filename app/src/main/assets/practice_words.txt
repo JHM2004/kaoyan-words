@@ -1,4 +1,4 @@
-emerge from 摆脱
+﻿emerge from 摆脱
 inferior 较差的，次的
 former 以前的
 for fear that 以防万一 
@@ -204,7 +204,6 @@ hemisphere 半球
 give rise to 导致
 quite a few 很多
 seek to do 试图...
-peoples 民族
 rule 法规，规定
 in effect 事实上
 permit 允许
